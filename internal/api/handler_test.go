@@ -176,6 +176,28 @@ func TestHandler_ClaimsIsAlwaysAList(t *testing.T) {
 	}
 }
 
+func TestHandler_IgnoresUnknownRequestFields(t *testing.T) {
+	// The plugin is released separately: a field it adds must not 400 every
+	// request until this service is redeployed.
+	cases := map[string]string{
+		"unknown top-level field": `{"resource":{"service":"svc","path":"/e/1"},"traceId":"abc","body":{"encoding":"json","content":{"dataOwner":"alice-42"}}}`,
+		"unknown nested field":    `{"resource":{"service":"svc","path":"/e/1","tenant":"t1"},"body":{"encoding":"json","content":{"dataOwner":"alice-42"}}}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHandler(t)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"alice-42"`) {
+				t.Fatalf("unexpected body: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandler_MethodNotAllowed(t *testing.T) {
 	h := newTestHandler(t)
 	rec := httptest.NewRecorder()

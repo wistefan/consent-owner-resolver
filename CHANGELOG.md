@@ -24,6 +24,10 @@ implementation.
   `null` to a value that cannot be iterated.
 - A payload the resolver cannot decode answers `400`; an owner it cannot
   determine answers `422`. The plugin keys its fail policy off the split.
+- Unknown fields in a `/resolve` request are ignored rather than rejected, so
+  the plugin can add one without waiting for a resolver deployment.
+- Error bodies are generic (`{"error":"cannot resolve owner"}`); the detail
+  names the deployment's pointer configuration and goes to the log instead.
 
 ### Facade wire contract
 

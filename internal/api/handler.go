@@ -112,8 +112,13 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxBodyBytes)
+	// Unknown fields are IGNORED, deliberately. The plugin and the resolver are
+	// released from separate repositories on separate cycles, so the day the
+	// plugin starts sending a new field, strict decoding would 400 every request
+	// until this service is redeployed - a coupling the split repos exist to
+	// avoid. (Config decoding stays strict: a config typo has no other way to be
+	// noticed, and there is no independent release cycle to accommodate.)
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 	var req resolver.ResolveRequest
 	if err := dec.Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
