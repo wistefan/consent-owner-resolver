@@ -4,7 +4,7 @@
 # --- Build stage ---
 # Pinned to the exact toolchain go.mod requires, so the image-built binary and
 # the CI-built binary are produced by the same compiler. Bump both together.
-FROM golang:1.26.7-alpine AS builder
+FROM golang:1.27.0-alpine AS builder
 
 WORKDIR /build
 
