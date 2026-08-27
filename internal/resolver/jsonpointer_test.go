@@ -20,8 +20,28 @@ package resolver
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 )
+
+func TestBadRequestError(t *testing.T) {
+	// The HTTP binding keys 400-vs-422 off this type, so both the message and
+	// the unwrap chain have to survive being wrapped.
+	cause := errors.New("illegal base64 data at input byte 0")
+	err := badRequestf("decode base64 body: %w", cause)
+
+	if got, want := err.Error(), "decode base64 body: illegal base64 data at input byte 0"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("the cause must stay reachable through errors.Is")
+	}
+	var badRequest *BadRequestError
+	if !errors.As(fmt.Errorf("wrapped: %w", err), &badRequest) {
+		t.Fatal("errors.As must find the type through an extra wrap")
+	}
+}
 
 func TestGetJSONPointer(t *testing.T) {
 	doc := map[string]interface{}{

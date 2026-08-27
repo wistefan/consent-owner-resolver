@@ -23,7 +23,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -36,13 +38,16 @@ import (
 	"consent-owner-resolver/internal/resolver"
 )
 
+// Environment variables the service reads.
 const (
 	envConfigPath   = "CONFIG_PATH"
 	envListenAddr   = "LISTEN_ADDR"
 	envMaxBodyBytes = "MAX_BODY_BYTES"
 	envAuthToken    = "AUTH_TOKEN"
 	envLogLevel     = "LOG_LEVEL"
+)
 
+const (
 	defaultConfigPath = "/etc/owner-resolver/config.json"
 	defaultListenAddr = ":8080"
 
@@ -51,52 +56,112 @@ const (
 	logLevelDebug = "debug"
 )
 
+// Server timeouts. The resolver sits on the synchronous path of every proxied
+// request, so a slow client must not be able to hold a connection open.
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 15 * time.Second
+	idleTimeout       = 60 * time.Second
+	shutdownTimeout   = 5 * time.Second
+)
+
+// settings is the process configuration, read from the environment.
+type settings struct {
+	configPath   string
+	listenAddr   string
+	maxBodyBytes int64
+	authToken    string
+	debug        bool
+}
+
+// settingsFromEnv reads the configuration, falling back to the defaults.
+func settingsFromEnv() settings {
+	return settings{
+		configPath:   getenv(envConfigPath, defaultConfigPath),
+		listenAddr:   getenv(envListenAddr, defaultListenAddr),
+		maxBodyBytes: getenvInt(envMaxBodyBytes, 0),
+		authToken:    os.Getenv(envAuthToken),
+		debug:        strings.EqualFold(os.Getenv(envLogLevel), logLevelDebug),
+	}
+}
+
 func main() {
-	configPath := getenv(envConfigPath, defaultConfigPath)
-	listenAddr := getenv(envListenAddr, defaultListenAddr)
-	maxBodyBytes := getenvInt(envMaxBodyBytes, 0)
-	authToken := os.Getenv(envAuthToken)
-	if authToken == "" {
-		log.Printf("[owner-resolver] %s is not set: /resolve is unauthenticated and must be reachable only by the consent-plugin (restrict it with a NetworkPolicy)", envAuthToken)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	res, err := resolver.Load(configPath)
+	s := settingsFromEnv()
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", s.listenAddr)
 	if err != nil {
-		log.Fatalf("[owner-resolver] load config: %v", err)
+		log.Fatalf("[owner-resolver] listen on %s: %v", s.listenAddr, err)
 	}
 
-	srv := &http.Server{
-		Addr: listenAddr,
-		Handler: api.NewHandler(res, api.Options{
-			MaxBodyBytes: maxBodyBytes,
-			AuthToken:    authToken,
-			Debug:        strings.EqualFold(os.Getenv(envLogLevel), logLevelDebug),
-		}),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
-	go func() {
-		log.Printf("[owner-resolver] listening on %s (config: %s)", listenAddr, configPath)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("[owner-resolver] server error: %v", err)
-		}
-	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("[owner-resolver] shutdown: %v", err)
+	if err := run(ctx, s, listener); err != nil {
+		log.Fatalf("[owner-resolver] %v", err)
 	}
 	log.Print("[owner-resolver] stopped")
 }
 
+// run loads the configuration, serves on the given listener, and shuts down
+// gracefully when ctx is cancelled.
+//
+// The listener is passed in rather than opened here so a test can serve on an
+// ephemeral port and still know which one it got.
+func run(ctx context.Context, s settings, listener net.Listener) error {
+	res, err := resolver.Load(s.configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if s.authToken == "" {
+		log.Printf("[owner-resolver] %s is not set: /resolve is unauthenticated and must be reachable only by the consent-plugin (restrict it with a NetworkPolicy)", envAuthToken)
+	}
+
+	srv := newServer(s, res)
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Printf("[owner-resolver] listening on %s (config: %s)", listener.Addr(), s.configPath)
+		err := srv.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serveErr <- err
+	}()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	// A fresh context: ctx is already cancelled, and shutdown needs its own
+	// budget to drain in-flight requests.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	//nolint:contextcheck // deliberate: ctx is already cancelled, and draining
+	// in-flight requests needs its own budget.
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+	return <-serveErr
+}
+
+// newServer builds the HTTP server for the given settings and resolver.
+func newServer(s settings, res resolver.Resolver) *http.Server {
+	return &http.Server{
+		Handler: api.NewHandler(res, api.Options{
+			MaxBodyBytes: s.maxBodyBytes,
+			AuthToken:    s.authToken,
+			Debug:        s.debug,
+		}),
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
+
+// getenv reads an environment variable, falling back when it is unset or empty.
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -104,6 +169,9 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
+// getenvInt reads an integer environment variable. An unparseable value is
+// logged and the fallback used, so a typo degrades to the default rather than
+// preventing the service from starting.
 func getenvInt(key string, fallback int64) int64 {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
