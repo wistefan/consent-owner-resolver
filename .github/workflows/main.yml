@@ -1,0 +1,43 @@
+name: Main
+
+# The same checks on every push to main - so a direct commit cannot bypass them -
+# followed by the release. `release` gates on license-headers as well as the
+# tests, so a version can never ship code that lacks the copyright header.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  license-headers:
+    uses: ./.github/workflows/license-headers.yml
+
+  style-guide:
+    uses: ./.github/workflows/style-guide.yml
+
+  build:
+    uses: ./.github/workflows/build.yml
+
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  security-analysis:
+    uses: ./.github/workflows/security-analysis.yml
+
+  release:
+    needs:
+      - license-headers
+      - style-guide
+      - tests
+      - security-analysis
+    uses: ./.github/workflows/release.yml
+    secrets:
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}

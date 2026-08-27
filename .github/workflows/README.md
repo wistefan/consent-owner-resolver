@@ -1,0 +1,41 @@
+# Workflows
+
+Modelled on [FIWARE/VCVerifier](https://github.com/FIWARE/VCVerifier/tree/main/.github/workflows):
+the individual checks are **reusable** workflows (`on: workflow_call`) that two entry points compose,
+so a check is defined once and runs identically on a PR and on `main`.
+
+## Entry points
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| `pr.yml` | PR to `main` | license-headers, style-guide, build, tests, security-analysis |
+| `main.yml` | push to `main` | the same checks, then `release.yml` |
+| `check.yml` | PR labelled/synchronized | enforces exactly one semver label (`patch`/`minor`/`major`), comments if missing |
+| `pre-release.yml` | PR to `main` | publishes a `<next>-PRE-<pr>` image + pre-release |
+| `stale-issues.yml` | daily cron | closes stale issues/PRs |
+
+## Reusable checks
+
+| Workflow | Does |
+|---|---|
+| `license-headers.yml` | `hack/license-header.sh check` - the Apache-2.0 header on every Go file |
+| `style-guide.yml` | `golangci-lint` using the repo's `.golangci.yml` |
+| `build.yml` | `go build` |
+| `tests.yml` | `go test -race` + coverage summary/artifact (Coveralls upload is non-blocking) |
+| `security-analysis.yml` | `govulncheck` + `gosec`, SARIF uploaded to code scanning |
+| `release.yml` | version from the merged PR's semver label → image (multi-arch, Trivy-scanned) + binaries + GitHub release |
+
+## Where the headers are enforced
+
+`license-headers.yml` runs in **three** places, so an unheadered file cannot reach a published
+artifact: on every PR (`pr.yml`), on every push to `main` (`main.yml`, where `release` also `needs`
+it), and as the first job of `pre-release.yml`.
+
+## Required repository configuration
+
+* Secrets `QUAY_USERNAME` / `QUAY_PASSWORD` - image push. Without them `pr.yml` still passes;
+  `pre-release.yml` and the release will fail at the login step.
+* Labels `patch`, `minor`, `major` must exist.
+* Code scanning must be enabled for the SARIF uploads (`security-events: write` is granted by the
+  callers).
+* Coveralls is optional - the upload is `continue-on-error`.
