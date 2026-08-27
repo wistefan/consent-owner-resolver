@@ -256,6 +256,49 @@ func TestResolve_UndecodableBodyStillFailsForJSONMatchers(t *testing.T) {
 	}
 }
 
+func TestResolve_StaticMatcher(t *testing.T) {
+	r := mustParse(t, `{
+	  "rules": [{
+	    "match": {"service": "always-gated"},
+	    "consentRequired": true,
+	    "matcher": {"type": "static", "owner": "alice-42", "resource": "urn:x", "participant": "urn:participant:p"}
+	  }]
+	}`)
+	res, err := r.Resolve(context.Background(), ResolveRequest{Resource: Resource{Service: "always-gated", Path: "/anything"}})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	want := Claim{Selector: Selector{Type: SelectorWhole}, OwnerID: "alice-42", DataResource: "urn:x", Participant: "urn:participant:p"}
+	if len(res.Claims) != 1 || res.Claims[0] != want {
+		t.Fatalf("unexpected claims: %+v", res.Claims)
+	}
+}
+
+func TestResolve_EmptyCollectionYieldsNoClaimsButStaysGated(t *testing.T) {
+	// The one legitimate zero-claim case: there is genuinely no subject in the
+	// payload. consentRequired must still report what the rule says.
+	r := mustParse(t, `{
+	  "rules": [{
+	    "match": {"service": "svc"},
+	    "consentRequired": true,
+	    "matcher": {"type": "json", "items": "", "itemsIsArray": true, "owner": "/owner"}
+	  }]
+	}`)
+	res, err := r.Resolve(context.Background(), ResolveRequest{
+		Resource: Resource{Service: "svc", Path: "/things"},
+		Body:     jsonBody(t, []interface{}{}),
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !res.ConsentRequired {
+		t.Fatal("an empty collection must not degrade to consentRequired:false")
+	}
+	if len(res.Claims) != 0 {
+		t.Fatalf("want no claims, got %+v", res.Claims)
+	}
+}
+
 func TestResolve_DefaultNoMatch_PassThrough(t *testing.T) {
 	r := mustParse(t, `{"rules": [{"match": {"service": "other"}, "consentRequired": true, "matcher": {"type": "static", "owner": "x"}}]}`)
 	res, err := r.Resolve(context.Background(), ResolveRequest{Resource: Resource{Service: "unknown", Path: "/x"}})

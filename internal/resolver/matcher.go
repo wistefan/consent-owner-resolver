@@ -26,9 +26,15 @@ import (
 )
 
 // Matcher turns a matched request (plus the request body, decoded on demand)
-// into a set of claims. Returning zero claims with no error means "matched, but
-// no data owner found here"; returning an error means "consent is required but
-// the owner could not be resolved" — the plugin then applies its fail policy.
+// into a set of claims. Returning an error means "consent is required but the
+// owner could not be resolved" — the plugin then applies its fail policy.
+//
+// Returning zero claims with no error means "matched, and there is genuinely no
+// subject in this payload". The ONLY way to reach it is an empty collection
+// (`itemsIsArray` over `[]`): nothing to gate, so nothing to claim. It must
+// never mean "I could not find the owner" — a matcher that cannot find one
+// errors. `consentRequired` stays whatever the rule says either way, so the
+// answer never silently degrades to "no consent needed".
 //
 // The body arrives as a Payload rather than an already-decoded value so that a
 // matcher which never reads it (path, static) cannot fail on an undecodable
@@ -184,6 +190,10 @@ func (m *jsonMatcher) claimForItem(item interface{}, selector string) (Claim, er
 
 // --- static matcher: fixed answer, for tests / always-gated routes ------------
 
+// staticMatcher answers with a fixed owner, whatever the request. Its `owner` is
+// required: a static rule with no owner paired with consentRequired:true would
+// tell the plugin "consent is required, but there is nothing to check it
+// against" on every single request.
 type staticMatcher struct {
 	owner       string
 	resource    string
@@ -191,13 +201,13 @@ type staticMatcher struct {
 }
 
 func newStaticMatcher(m rawMatcher) (Matcher, error) {
+	if m.Owner == "" {
+		return nil, errors.New("static matcher: 'owner' is required (a static rule with no owner can never produce a claim)")
+	}
 	return &staticMatcher{owner: m.Owner, resource: m.Resource, participant: m.Participant}, nil
 }
 
 func (m *staticMatcher) Claims(_ context.Context, _ ResolveRequest, _ Payload) ([]Claim, error) {
-	if m.owner == "" {
-		return nil, nil
-	}
 	return []Claim{{
 		Selector:     Selector{Type: SelectorWhole},
 		OwnerID:      m.owner,
