@@ -99,6 +99,8 @@ func getenvInt(key string, fallback int64) int64 {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
+		// #nosec G706 -- %q escapes control characters, so an env value cannot
+		// forge a log line.
 		log.Printf("[owner-resolver] invalid %s=%q, using default", key, v)
 	}
 	return fallback

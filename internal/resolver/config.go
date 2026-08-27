@@ -133,6 +133,8 @@ type ConfigResolver struct {
 
 // Load reads and compiles a resolver configuration from a JSON file.
 func Load(path string) (*ConfigResolver, error) {
+	// #nosec G304 -- the path is operator-supplied (CONFIG_PATH), never request
+	// input, so there is no untrusted value to traverse with.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)

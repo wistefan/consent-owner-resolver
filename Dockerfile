@@ -2,7 +2,9 @@
 # Stage 1: compile a static Go binary. Stage 2: minimal non-root runtime.
 
 # --- Build stage ---
-FROM golang:1.23-alpine AS builder
+# Pinned to the exact toolchain go.mod requires, so the image-built binary and
+# the CI-built binary are produced by the same compiler. Bump both together.
+FROM golang:1.26.7-alpine AS builder
 
 WORKDIR /build
 
@@ -14,17 +16,16 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o owner-resolver .
 
 # --- Runtime stage ---
-FROM alpine:3.19
-
-RUN apk add --no-cache ca-certificates \
-	&& addgroup -g 10100 app \
-	&& adduser -u 10100 -G app -s /sbin/nologin -D app
+# distroless/static: no shell, no package manager, nothing to patch - the binary
+# is CGO_ENABLED=0, so it needs nothing but ca-certificates, which the image
+# already carries. `nonroot` runs as uid 65532.
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 COPY --from=builder /build/owner-resolver /app/owner-resolver
 
 # Non-root, read-only-friendly: the config is mounted at /etc/owner-resolver.
-USER 10100:10100
+USER 65532:65532
 ENV CONFIG_PATH=/etc/owner-resolver/config.json \
 	LISTEN_ADDR=:8080
 

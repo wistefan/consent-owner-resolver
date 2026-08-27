@@ -8,7 +8,10 @@ DOCKER_TAG := 0.0.1
 GO_BUILD_FLAGS := -trimpath -ldflags="-s -w"
 COVERAGE_FILE := coverage.out
 
-.PHONY: build test test-cover lint license-check license-fix run docker-build clean
+GOSEC_VERSION := v2.29.0
+GOVULNCHECK_VERSION := v1.7.0
+
+.PHONY: build test test-cover lint security license-check license-fix run docker-build clean
 
 ## build: Compile the owner-resolver binary
 build:
@@ -26,6 +29,11 @@ test-cover:
 ## lint: Run golangci-lint
 lint:
 	golangci-lint run ./...
+
+## security: Run the same blocking security scans CI runs
+security:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
 
 ## license-check: Verify the Apache-2.0 copyright header on every Go file (CI runs this)
 license-check:

@@ -186,8 +186,13 @@ integration contract.
 ```sh
 make build && CONFIG_PATH=config/example.json ./owner-resolver   # :8080
 make test                                                        # unit tests
+make security                                                    # govulncheck + gosec (blocking in CI)
 make docker-build                                                # quay.io/wi_stefan/consent-owner-resolver:0.0.1
 ```
+
+Requires Go 1.26.7+ (the version `go.mod` pins). The runtime image is
+`gcr.io/distroless/static-debian12:nonroot` — no shell, no package manager, and
+nothing to patch beyond the binary itself.
 
 Env: `CONFIG_PATH`, `LISTEN_ADDR` (default `:8080`), `MAX_BODY_BYTES` (default 5 MiB),
 `AUTH_TOKEN` (see below).

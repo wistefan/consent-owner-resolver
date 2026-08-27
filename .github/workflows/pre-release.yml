@@ -82,6 +82,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Reporting run: never blocks, so the Security tab is populated even when
+      # the gate below stops the build.
       - uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
         with:
@@ -94,6 +96,18 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
+
+      # Blocking gate: a CRITICAL vulnerability in the image must not ship.
+      # HIGH stays reporting-only - it is noisy enough on base images that
+      # blocking on it would train people to bypass the gate.
+      - name: Fail on CRITICAL image vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: local/${{ env.IMAGE_NAME }}:scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
       - uses: docker/setup-qemu-action@v4
 
