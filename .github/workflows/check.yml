@@ -18,28 +18,31 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - id: bump
-        uses: zwaldowski/match-label-action@v1
+      # `pull_request_target` checks out the BASE, never the PR head: the label
+      # scripts must be the reviewed ones, not whatever the PR proposes.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          allowed: major,minor,patch
+          fetch-depth: 0
 
-      - uses: zwaldowski/semver-release-action@v6
-        with:
-          dry_run: true
-          bump: ${{ steps.bump.outputs.match }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Require exactly one semver label
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          bump=$(jq -r '.[]' <<<"$LABELS" | ./hack/semver-bump.sh)
+          echo "This PR would release $(./hack/next-version.sh "$bump") ($bump)."
 
   comment:
     needs: check
     runs-on: ubuntu-latest
     if: failure()
     steps:
-      - uses: thollander/actions-comment-pull-request@v3
+      - uses: thollander/actions-comment-pull-request@65f9e5c9a1f2cd378bd74b2e057c9736982a8e74 # v3
         with:
           message: "Please apply one of the following labels to the PR: `patch`, `minor`, or `major`. See [CONTRIBUTING.md](https://github.com/${{ github.repository }}/blob/main/CONTRIBUTING.md) for details."

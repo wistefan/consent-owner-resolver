@@ -22,8 +22,27 @@ so a check is defined once and runs identically on a PR and on `main`.
 | `style-guide.yml` | `golangci-lint` using the repo's `.golangci.yml` |
 | `build.yml` | `go build` |
 | `tests.yml` | `go test -race` + coverage summary/artifact (Coveralls upload is non-blocking) |
-| `security-analysis.yml` | `govulncheck` + `gosec`, SARIF uploaded to code scanning |
+| `security-analysis.yml` | `govulncheck` + `gosec` (both **blocking**), SARIF uploaded to code scanning |
 | `release.yml` | version from the merged PR's semver label → image (multi-arch, Trivy-scanned) + binaries + GitHub release |
+
+## Third-party actions
+
+Every `uses:` is pinned to a **commit SHA** with the tag in a trailing comment; a mutable tag on a
+third-party action is a supply-chain hole, and `@latest` on one is worse. `.github/dependabot.yml`
+keeps the pins current (it rewrites SHA and comment together).
+
+The semver plumbing is plain shell rather than third-party actions, because the ones previously used
+are archived:
+
+| was | now |
+|---|---|
+| `zwaldowski/match-label-action` | `hack/semver-bump.sh` |
+| `zwaldowski/semver-release-action` | `hack/next-version.sh` |
+| `actions-ecosystem/action-get-merged-pull-request` | `gh api .../commits/$SHA/pulls` |
+| `marvinpinto/action-automatic-releases@latest` | `gh release create` |
+
+Both scripts run locally: `printf 'patch\n' | ./hack/semver-bump.sh` and
+`./hack/next-version.sh patch`.
 
 ## Where the headers are enforced
 
@@ -39,3 +58,5 @@ it), and as the first job of `pre-release.yml`.
 * Code scanning must be enabled for the SARIF uploads (`security-events: write` is granted by the
   callers).
 * Coveralls is optional - the upload is `continue-on-error`.
+* `main.yml` must grant `contents: write` and `pull-requests: read`: a called workflow's token can
+  never be wider than its caller's, so without them the release is skipped silently.
