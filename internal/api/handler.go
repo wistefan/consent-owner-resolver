@@ -19,31 +19,76 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"consent-owner-resolver/internal/resolver"
 )
 
+// defaultMaxBodyBytes caps an unconfigured request body at 5 MiB.
+const defaultMaxBodyBytes = 5 << 20
+
+// bearerPrefix is the Authorization scheme accepted for the shared secret.
+const bearerPrefix = "Bearer "
+
+// Options configures the HTTP binding.
+type Options struct {
+	// MaxBodyBytes caps the request body (0 = defaultMaxBodyBytes).
+	MaxBodyBytes int64
+	// AuthToken, when non-empty, is a shared secret every /resolve call must
+	// present as `Authorization: Bearer <token>`. Empty leaves /resolve open,
+	// which is only safe on a network where nothing but the plugin can reach it.
+	AuthToken string
+}
+
 // Handler serves the resolver HTTP API.
+//
+// The service is meant to run cluster-internal, reachable only by the
+// consent-plugin: /resolve answers who owns a piece of data, so an open port is
+// an owner-identifier oracle. Restrict it with a NetworkPolicy, and set
+// Options.AuthToken on top where the plugin and resolver do not share a trust
+// boundary.
 type Handler struct {
 	resolver     resolver.Resolver
 	maxBodyBytes int64
+	authToken    string
 }
 
 // NewHandler builds an http.Handler routing /resolve and /health to the given
-// resolver. maxBodyBytes caps the request body (0 = a 5 MiB default).
-func NewHandler(r resolver.Resolver, maxBodyBytes int64) http.Handler {
-	if maxBodyBytes <= 0 {
-		maxBodyBytes = 5 << 20
+// resolver.
+func NewHandler(r resolver.Resolver, opts Options) http.Handler {
+	if opts.MaxBodyBytes <= 0 {
+		opts.MaxBodyBytes = defaultMaxBodyBytes
 	}
-	h := &Handler{resolver: r, maxBodyBytes: maxBodyBytes}
+	h := &Handler{resolver: r, maxBodyBytes: opts.MaxBodyBytes, authToken: opts.AuthToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/resolve", h.resolve)
+	// /health carries no data and must stay reachable for liveness probes, so it
+	// is deliberately not authenticated.
 	mux.HandleFunc("/health", h.health)
 	return mux
+}
+
+// authorized reports whether the request presents the configured shared secret.
+// With no secret configured every request is authorized - the network is then
+// the only control.
+func (h *Handler) authorized(r *http.Request) bool {
+	if h.authToken == "" {
+		return true
+	}
+	header := r.Header.Get("Authorization")
+	// The scheme is required: accepting a bare token would let a header that
+	// merely happens to carry the secret authenticate.
+	if !strings.HasPrefix(header, bearerPrefix) {
+		return false
+	}
+	// Constant-time: a length-independent compare would leak the secret to a
+	// caller that can time the response.
+	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, bearerPrefix)), []byte(h.authToken)) == 1
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -53,6 +98,11 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "only POST is allowed")
+		return
+	}
+	if !h.authorized(r) {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 

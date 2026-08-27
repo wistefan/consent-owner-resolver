@@ -39,6 +39,7 @@ const (
 	envConfigPath   = "CONFIG_PATH"
 	envListenAddr   = "LISTEN_ADDR"
 	envMaxBodyBytes = "MAX_BODY_BYTES"
+	envAuthToken    = "AUTH_TOKEN"
 
 	defaultConfigPath = "/etc/owner-resolver/config.json"
 	defaultListenAddr = ":8080"
@@ -48,6 +49,10 @@ func main() {
 	configPath := getenv(envConfigPath, defaultConfigPath)
 	listenAddr := getenv(envListenAddr, defaultListenAddr)
 	maxBodyBytes := getenvInt(envMaxBodyBytes, 0)
+	authToken := os.Getenv(envAuthToken)
+	if authToken == "" {
+		log.Printf("[owner-resolver] %s is not set: /resolve is unauthenticated and must be reachable only by the consent-plugin (restrict it with a NetworkPolicy)", envAuthToken)
+	}
 
 	res, err := resolver.Load(configPath)
 	if err != nil {
@@ -56,7 +61,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           api.NewHandler(res, maxBodyBytes),
+		Handler:           api.NewHandler(res, api.Options{MaxBodyBytes: maxBodyBytes, AuthToken: authToken}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

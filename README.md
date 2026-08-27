@@ -124,7 +124,42 @@ make test                                                        # unit tests
 make docker-build                                                # quay.io/wi_stefan/consent-owner-resolver:0.0.1
 ```
 
-Env: `CONFIG_PATH`, `LISTEN_ADDR` (default `:8080`), `MAX_BODY_BYTES` (default 5 MiB).
+Env: `CONFIG_PATH`, `LISTEN_ADDR` (default `:8080`), `MAX_BODY_BYTES` (default 5 MiB),
+`AUTH_TOKEN` (see below).
+
+## Deployment: this service is cluster-internal
+
+**`/resolve` must not be reachable from outside the cluster.** It answers *who
+owns this data*, so an open port is an owner-identifier oracle: a caller can
+probe which services and paths are gated, harvest owner ids (a `path`-matcher
+route returns `ownerId` from the path with no body at all), and enumerate which
+contracts exist between arbitrary provider/consumer pairs by varying `parties`.
+
+Restrict it to the plugin with a NetworkPolicy:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: owner-resolver-plugin-only
+spec:
+  podSelector:
+    matchLabels: { app: owner-resolver }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: apisix }   # the consent-plugin's pod
+      ports:
+        - protocol: TCP
+          port: 8080
+```
+
+Where the plugin and the resolver do not share a trust boundary, set
+`AUTH_TOKEN` on the resolver and have the plugin send
+`Authorization: Bearer <token>`; requests without it get `401`. `GET /health`
+stays unauthenticated so liveness probes keep working. mTLS between the two (a
+service mesh, or a sidecar) is the stronger option where one is available.
 
 ## Where it fits
 

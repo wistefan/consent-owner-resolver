@@ -27,6 +27,10 @@ import (
 )
 
 func newTestHandler(t *testing.T) http.Handler {
+	return newTestHandlerWithOptions(t, Options{})
+}
+
+func newTestHandlerWithOptions(t *testing.T, opts Options) http.Handler {
 	t.Helper()
 	r, err := resolver.Parse([]byte(`{
 	  "rules": [{
@@ -38,7 +42,45 @@ func newTestHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	return NewHandler(r, 0)
+	return NewHandler(r, opts)
+}
+
+func TestHandler_SharedSecret(t *testing.T) {
+	const token = "s3cr3t"
+	body := `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"json","content":{"dataOwner":"alice-42"}}}`
+	cases := map[string]struct {
+		authorization string
+		wantStatus    int
+	}{
+		"correct secret":   {authorization: "Bearer " + token, wantStatus: http.StatusOK},
+		"wrong secret":     {authorization: "Bearer nope", wantStatus: http.StatusUnauthorized},
+		"no header at all": {authorization: "", wantStatus: http.StatusUnauthorized},
+		"missing scheme":   {authorization: token, wantStatus: http.StatusUnauthorized},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHandlerWithOptions(t, Options{AuthToken: token})
+			req := httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(body))
+			if tc.authorization != "" {
+				req.Header.Set("Authorization", tc.authorization)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("want %d, got %d (%s)", tc.wantStatus, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandler_HealthStaysUnauthenticated(t *testing.T) {
+	// Liveness probes carry no credentials, and /health exposes no data.
+	h := newTestHandlerWithOptions(t, Options{AuthToken: "s3cr3t"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
 }
 
 func TestHandler_ResolveOK(t *testing.T) {
