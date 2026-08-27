@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 )
 
 // Matcher type identifiers used in configuration.
@@ -63,6 +64,10 @@ type rawContractService struct {
 	ProviderSelfDescription string `json:"providerSelfDescription"`
 	// TimeoutMs bounds each facade call (default contract.DefaultTimeoutMs).
 	TimeoutMs int `json:"timeoutMs"`
+	// ResourceCacheTtlMs is how long a contract's catalog data resources are
+	// reused across requests (default DefaultResourceCacheTTLMs). Negative
+	// disables the cache.
+	ResourceCacheTtlMs int `json:"resourceCacheTtlMs"`
 }
 
 type rawRule struct {
@@ -158,7 +163,10 @@ func Parse(data []byte) (*ConfigResolver, error) {
 		if raw.ContractService.URL == "" {
 			return nil, fmt.Errorf("contractService.url is required when contractService is set")
 		}
-		contractClient = contract.NewClient(raw.ContractService.URL, raw.ContractService.TimeoutMs)
+		contractClient = newCachingLookup(
+			contract.NewClient(raw.ContractService.URL, raw.ContractService.TimeoutMs),
+			resourceCacheTTL(raw.ContractService.ResourceCacheTtlMs),
+		)
 		providerSD = raw.ContractService.ProviderSelfDescription
 	}
 
@@ -193,6 +201,15 @@ func Parse(data []byte) (*ConfigResolver, error) {
 		})
 	}
 	return cr, nil
+}
+
+// resourceCacheTTL maps the configured value onto a duration: unset (0) means
+// the default, a negative value disables the cache.
+func resourceCacheTTL(ms int) time.Duration {
+	if ms == 0 {
+		ms = DefaultResourceCacheTTLMs
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func buildMatcher(m rawMatcher, contractClient contractLookup, providerSD string) (Matcher, error) {

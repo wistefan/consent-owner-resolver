@@ -87,8 +87,49 @@ func newContractMatcher(m rawMatcher, client contractLookup, providerSD string) 
 	}, nil
 }
 
+// perRequestResources memoizes, for the duration of ONE request, the PII data
+// resource of each contract. Without it a collection response costs one facade
+// round-trip per array element - and each round-trip is itself
+// 1 + len(offering.dataResources) HTTP GETs - on the synchronous path of every
+// proxied API call.
+type perRequestResources struct {
+	client contractLookup
+	byID   map[string]piiResource
+}
+
+// piiResource is the resolved answer for one contract: the PII data resource id
+// and whether the contract declared one at all.
+type piiResource struct {
+	id    string
+	found bool
+}
+
+func newPerRequestResources(client contractLookup) *perRequestResources {
+	return &perRequestResources{client: client, byID: map[string]piiResource{}}
+}
+
+// pii returns the contract's PII data resource, fetching it at most once per
+// request. A contract without an id is not memoized (it cannot be keyed safely).
+func (p *perRequestResources) pii(ctx context.Context, c contract.Contract) (piiResource, error) {
+	if cached, ok := p.byID[c.ID]; ok && c.ID != "" {
+		return cached, nil
+	}
+	resources, err := p.client.DataResources(ctx, c)
+	if err != nil {
+		return piiResource{}, err
+	}
+	resource, found := firstPIIResource(resources)
+	result := piiResource{id: resource.ID, found: found}
+	if c.ID != "" {
+		p.byID[c.ID] = result
+	}
+	return result, nil
+}
+
 // Claims resolves one claim per data item. It fetches the contracts once per
-// request and reuses them for every item.
+// request, and each contract's catalog data resources at most once per request
+// (see perRequestResources), so a 50-entity collection costs one facade
+// round-trip per DISTINCT governing contract rather than fifty.
 func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, decoded interface{}) ([]Claim, error) {
 	if decoded == nil {
 		return nil, errors.New("contract matcher: a JSON body is required but none was decoded")
@@ -116,12 +157,13 @@ func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, decode
 		return nil, fmt.Errorf("contract matcher: no signed contract between %q and %q", provider, consumer)
 	}
 
+	resources := newPerRequestResources(m.client)
 	root, ok := getJSONPointer(decoded, m.items)
 	if !ok {
 		return nil, fmt.Errorf("contract matcher: no data at items pointer %q", m.items)
 	}
 	if !m.itemsIsArray {
-		claim, err := m.claimForItem(ctx, contracts, root, m.items)
+		claim, err := m.claimForItem(ctx, resources, contracts, root, m.items)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +175,7 @@ func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, decode
 	}
 	claims := make([]Claim, 0, len(arr))
 	for i, item := range arr {
-		claim, err := m.claimForItem(ctx, contracts, item, joinPointer(m.items, strconv.Itoa(i)))
+		claim, err := m.claimForItem(ctx, resources, contracts, item, joinPointer(m.items, strconv.Itoa(i)))
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +184,7 @@ func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, decode
 	return claims, nil
 }
 
-func (m *contractMatcher) claimForItem(ctx context.Context, contracts []contract.Contract, item interface{}, selector string) (Claim, error) {
+func (m *contractMatcher) claimForItem(ctx context.Context, resources *perRequestResources, contracts []contract.Contract, item interface{}, selector string) (Claim, error) {
 	owner, ok := pointerString(item, m.ownerPtr)
 	if !ok || owner == "" {
 		return Claim{}, fmt.Errorf("contract matcher: no owner at %q", m.ownerPtr)
@@ -157,12 +199,11 @@ func (m *contractMatcher) claimForItem(ctx context.Context, contracts []contract
 		return Claim{}, fmt.Errorf("contract matcher: no contract rule targets %q", requestedURI)
 	}
 
-	resources, err := m.client.DataResources(ctx, governing)
+	resource, err := resources.pii(ctx, governing)
 	if err != nil {
 		return Claim{}, fmt.Errorf("contract matcher: resolving data resources of contract %q: %w", governing.ID, err)
 	}
-	resource, found := firstPIIResource(resources)
-	if !found {
+	if !resource.found {
 		// The contract governs this object but declares no PII resource: nothing to
 		// gate. Emitting no resource keeps the claim owner-level rather than
 		// silently allowing.
@@ -175,7 +216,7 @@ func (m *contractMatcher) claimForItem(ctx context.Context, contracts []contract
 	return Claim{
 		Selector:     Selector{Type: SelectorJSONPointer, Value: selector},
 		OwnerID:      owner,
-		DataResource: resource.ID,
+		DataResource: resource.id,
 		Participant:  m.participant,
 	}, nil
 }
