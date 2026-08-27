@@ -11,7 +11,7 @@ so a check is defined once and runs identically on a PR and on `main`.
 | `pr.yml` | PR to `main` | license-headers, style-guide, build, tests, security-analysis |
 | `main.yml` | push to `main` | the same checks, then `release.yml` |
 | `check.yml` | PR labelled/synchronized | enforces exactly one semver label (`patch`/`minor`/`major`), comments if missing |
-| `pre-release.yml` | PR to `main` | publishes a `<next>-PRE-<pr>` image + pre-release |
+| `pre-release.yml` | PR to `main` (**same-repo branches only**) | publishes a `<next>-PRE-<pr>` image + pre-release |
 | `stale-issues.yml` | daily cron | closes stale issues/PRs |
 
 ## Reusable checks
@@ -53,7 +53,9 @@ it), and as the first job of `pre-release.yml`.
 ## Required repository configuration
 
 * Secrets `QUAY_USERNAME` / `QUAY_PASSWORD` - image push. Without them `pr.yml` still passes;
-  `pre-release.yml` and the release will fail at the login step.
+  the release will fail at the login step. `pre-release.yml` is skipped entirely for fork PRs (they
+  get neither the secrets nor `contents: write`), so an external contributor sees a green pipeline
+  rather than a broken one they cannot fix.
 * Labels `patch`, `minor`, `major` must exist.
 * Code scanning must be enabled for the SARIF uploads (`security-events: write` is granted by the
   callers).

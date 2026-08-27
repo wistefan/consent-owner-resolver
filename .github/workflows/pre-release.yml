@@ -3,6 +3,17 @@ name: Pre-Release
 # Publishes a `<next>-PRE-<pr>` image and pre-release for an open PR, so the
 # change can be deployed and tried before it is merged. Requires the PR to carry
 # a semver label (check.yml enforces that).
+#
+# SAME-REPO BRANCHES ONLY. A fork PR gets neither the Quay secrets (they are
+# empty) nor `contents: write`, so every job here would fail for an external
+# contributor - a permanently red pipeline they cannot fix. `pr.yml` runs all
+# the actual checks for forks; this workflow is a deploy convenience, so it is
+# skipped rather than failed.
+#
+# Note this DOES publish an image built from unreviewed code to a public
+# registry on every `synchronize` of a same-repo branch. That is the point of a
+# preview flow, and it is a deliberate choice: pushes to this repository already
+# require write access.
 on:
   pull_request:
     types:
@@ -28,10 +39,12 @@ jobs:
   # The copyright headers gate the pre-release too, so an unheadered file cannot
   # be published even as a PRE image.
   license-headers:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/license-headers.yml
 
   generate-version:
     needs: license-headers
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.out.outputs.version }}
@@ -51,6 +64,7 @@ jobs:
 
   build-scan-push:
     needs: generate-version
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -122,6 +136,7 @@ jobs:
 
   build-binaries:
     needs: generate-version
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -155,6 +170,7 @@ jobs:
       - generate-version
       - build-scan-push
       - build-binaries
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
