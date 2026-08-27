@@ -1,0 +1,29 @@
+name: "Close stale issues and PRs"
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+
+# actions/stale needs write access to label and close; nothing else here does.
+permissions:
+  issues: write
+  pull-requests: write
+
+# The thresholds live here and are interpolated into the messages, so the notice
+# a contributor reads can never disagree with the schedule that produced it.
+env:
+  DAYS_BEFORE_STALE: 40
+  DAYS_BEFORE_CLOSE: 5
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11
+        with:
+          days-before-stale: ${{ env.DAYS_BEFORE_STALE }}
+          days-before-close: ${{ env.DAYS_BEFORE_CLOSE }}
+          stale-issue-message: "This issue is stale because it has been open ${{ env.DAYS_BEFORE_STALE }} days with no activity. Remove the stale label or comment, or this will be closed in ${{ env.DAYS_BEFORE_CLOSE }} days."
+          # Without a PR message actions/stale skips pull requests entirely,
+          # which would leave the workflow's own name a half-truth.
+          stale-pr-message: "This pull request is stale because it has been open ${{ env.DAYS_BEFORE_STALE }} days with no activity. Remove the stale label or comment, or this will be closed in ${{ env.DAYS_BEFORE_CLOSE }} days."
