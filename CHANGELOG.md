@@ -18,6 +18,14 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Nothing released yet; this is the pre-`0.1.0` state of the initial
 implementation.
 
+### API contract
+
+- `api/openapi.json` is the machine-readable contract for `/resolve`, `/health`
+  and `/metrics`. `internal/api/openapi_test.go` drives the real handler and
+  fails on any response property the spec does not document, any required
+  property missing, any enum value outside the documented set, and any status
+  code the spec does not list.
+
 ### Response contract
 
 - `claims` is always a list, never `null` — the Lua plugin's `cjson` decodes

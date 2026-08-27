@@ -21,7 +21,7 @@ so a check is defined once and runs identically on a PR and on `main`.
 | `license-headers.yml` | `hack/license-header.sh check` - the Apache-2.0 header on every Go file |
 | `style-guide.yml` | `golangci-lint` (pinned) using the repo's `.golangci.yml` - same config as `make lint` |
 | `build.yml` | `go build` |
-| `tests.yml` | `go test -race` + coverage summary/artifact (Coveralls upload is non-blocking) |
+| `tests.yml` | `go test -race` + coverage summary/artifact (Coveralls upload is non-blocking). Includes the OpenAPI drift check, so a response shape cannot change without the spec |
 | `security-analysis.yml` | `govulncheck` + `gosec` (both **blocking**), SARIF uploaded to code scanning |
 | `release.yml` | version from the merged PR's semver label → image (multi-arch, Trivy-scanned) + binaries + GitHub release |
 

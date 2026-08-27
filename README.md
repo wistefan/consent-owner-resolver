@@ -24,6 +24,11 @@ sent).
 
 ## HTTP API
 
+The full contract is [`api/openapi.json`](api/openapi.json) — an OpenAPI 3.0
+document, written as JSON so the repository's own tests parse it with the
+standard library and fail when a response drifts from it
+(`internal/api/openapi_test.go`). What follows is the readable summary.
+
 ### `POST /resolve`
 
 Request — the data and its provenance, never the requestor:

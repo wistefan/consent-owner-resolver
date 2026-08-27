@@ -1,0 +1,168 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "consent-owner-resolver",
+    "version": "0.1.0",
+    "description": "The OwnerResolver API consumed by the consent-plugin. It answers two questions about a payload, WITHOUT ever seeing the requestor: does this data require a consent check, and who is its data owner. Written as JSON rather than YAML so the repository's own tests can parse it with the standard library and fail on drift - see internal/api/openapi_test.go.",
+    "license": { "name": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0" }
+  },
+  "paths": {
+    "/resolve": {
+      "post": {
+        "summary": "Resolve consent requirement and data owners for a payload",
+        "description": "The request carries the data and its provenance, never the requestor. Ownership always comes from the data; `parties` exists only so the governing contract can be identified.",
+        "security": [{}, { "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved. `claims` is always a list, never null.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveResult" } } }
+          },
+          "400": {
+            "description": "The request, or the payload inside it, could not be decoded.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "AUTH_TOKEN is configured and the request did not present it.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "405": {
+            "description": "Only POST is allowed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "The request body exceeded MAX_BODY_BYTES.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "422": {
+            "description": "Consent may be required but the owner could not be determined. The plugin applies its fail policy (deny by default). This NEVER means 'no consent needed'.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Liveness probe",
+        "description": "Unauthenticated by design: probes carry no credentials and this exposes no data.",
+        "responses": {
+          "200": {
+            "description": "The service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": { "status": { "type": "string", "enum": ["ok"] } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "description": "Labels carry route, status and error class only - no request path and no owner - so this is safe to scrape without the shared secret.",
+        "responses": {
+          "200": {
+            "description": "Metrics in the Prometheus text exposition format.",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "405": {
+            "description": "Only GET is allowed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The optional shared secret (AUTH_TOKEN). When unset, /resolve is open and the network is the only control."
+      }
+    },
+    "schemas": {
+      "ResolveRequest": {
+        "type": "object",
+        "required": ["resource"],
+        "description": "Unknown properties are ignored, so the plugin can add a field without waiting for a resolver deployment.",
+        "properties": {
+          "resource": { "$ref": "#/components/schemas/Resource" },
+          "parties": { "$ref": "#/components/schemas/Parties" },
+          "body": { "$ref": "#/components/schemas/Body" }
+        }
+      },
+      "Resource": {
+        "type": "object",
+        "description": "The data and its provenance. Deliberately carries no requestor identity.",
+        "properties": {
+          "service": { "type": "string", "description": "Logical dataset/route id, configured on the plugin route." },
+          "method": { "type": "string", "description": "Upstream HTTP method (informational)." },
+          "path": { "type": "string", "description": "Upstream request path - the primary handle for opaque data." },
+          "contentType": { "type": "string", "description": "Payload media type (informational)." }
+        }
+      },
+      "Parties": {
+        "type": "object",
+        "description": "Identifies the governing contract ONLY. Never used to determine the data owner. `consumer` is required for `contract` matcher rules.",
+        "properties": {
+          "consumer": { "type": "string", "description": "The requesting participant, e.g. the DID that issued the presented credential." },
+          "provider": { "type": "string", "description": "Overrides the configured provider self-description." }
+        }
+      },
+      "Body": {
+        "type": "object",
+        "required": ["encoding"],
+        "properties": {
+          "encoding": { "type": "string", "enum": ["none", "json", "base64"] },
+          "content": { "description": "The payload; shape depends on `encoding`. Omitted for `none`." }
+        }
+      },
+      "ResolveResult": {
+        "type": "object",
+        "required": ["consentRequired", "claims"],
+        "properties": {
+          "consentRequired": { "type": "boolean", "description": "Does this payload need a consent check?" },
+          "scheme": { "type": "string", "enum": ["identifier", "email", "did"], "description": "How to interpret every ownerId." },
+          "claims": {
+            "type": "array",
+            "description": "One entry per data item / subject. Always a list, never null.",
+            "items": { "$ref": "#/components/schemas/Claim" }
+          }
+        }
+      },
+      "Claim": {
+        "type": "object",
+        "required": ["selector", "ownerId"],
+        "properties": {
+          "selector": { "$ref": "#/components/schemas/Selector" },
+          "ownerId": { "type": "string", "description": "The data owner (subject), interpreted per ResolveResult.scheme." },
+          "participant": { "type": "string", "description": "Optionally scopes the owner lookup to a participant." },
+          "dataResource": { "type": "string", "description": "What this data is, in the vocabulary the consent is expressed in (Consent.data[].resource). Omitted for owner-level consent." }
+        }
+      },
+      "Selector": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["whole", "json-pointer"] },
+          "value": { "type": "string", "description": "RFC6901 pointer; empty means the whole document. Absent for `whole`." }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "description": "Deliberately generic: the detail names the deployment's pointer configuration and goes to the log instead.",
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  }
+}
