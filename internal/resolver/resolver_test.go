@@ -20,6 +20,7 @@ package resolver
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -301,13 +302,41 @@ func TestResolve_Errors(t *testing.T) {
 	})
 }
 
+func TestParse_ShippedExampleConfigs(t *testing.T) {
+	// The examples are the documentation of the config format; a change that
+	// makes them unparseable must fail here rather than at a user's deployment.
+	examples, err := filepath.Glob(filepath.Join("..", "..", "config", "*.json"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(examples) == 0 {
+		t.Fatal("no example configs found")
+	}
+	for _, example := range examples {
+		t.Run(filepath.Base(example), func(t *testing.T) {
+			if _, err := Load(example); err != nil {
+				t.Fatalf("Load(%s): %v", example, err)
+			}
+		})
+	}
+}
+
+func TestLoad_MissingFile(t *testing.T) {
+	if _, err := Load(filepath.Join(t.TempDir(), "does-not-exist.json")); err == nil {
+		t.Fatal("expected an error for a missing config file")
+	}
+}
+
 func TestParse_ConfigErrors(t *testing.T) {
 	cases := map[string]string{
-		"unknown matcher type":   `{"rules": [{"match": {}, "matcher": {"type": "bogus"}}]}`,
-		"missing matcher type":   `{"rules": [{"match": {}, "matcher": {}}]}`,
-		"path without owner grp": `{"rules": [{"match": {}, "matcher": {"type": "path", "pattern": "^/x$"}}]}`,
-		"json without owner":     `{"rules": [{"match": {}, "matcher": {"type": "json", "resource": "urn:x"}}]}`,
-		"unknown top field":      `{"nope": true, "rules": []}`,
+		"unknown matcher type":                     `{"rules": [{"match": {}, "matcher": {"type": "bogus"}}]}`,
+		"missing matcher type":                     `{"rules": [{"match": {}, "matcher": {}}]}`,
+		"path without owner grp":                   `{"rules": [{"match": {}, "matcher": {"type": "path", "pattern": "^/x$"}}]}`,
+		"json without owner":                       `{"rules": [{"match": {}, "matcher": {"type": "json", "resource": "urn:x"}}]}`,
+		"unknown top field":                        `{"nope": true, "rules": []}`,
+		"contractService without url":              `{"contractService": {}, "rules": []}`,
+		"contract matcher without contractService": `{"rules": [{"match": {}, "matcher": {"type": "contract", "owner": "/o"}}]}`,
+		"contract matcher without owner":           `{"contractService": {"url": "http://facade:8080"}, "rules": [{"match": {}, "matcher": {"type": "contract"}}]}`,
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -36,6 +36,10 @@ Request — the data and its provenance, never the requestor:
     "path":        "/ngsi-ld/v1/entities/urn:ngsi-ld:PersonalProfile:alice",
     "contentType": "application/ld+json"
   },
+  "parties": {                            // optional; identifies the CONTRACT, never the owner
+    "consumer": "did:web:fancy-marketplace.biz",       // the requesting participant
+    "provider": "https://…/participants/urn:…:prov"    // optional override of the configured provider SD
+  },
   "body": {                               // optional
     "encoding": "json",                   // json | base64 | none
     "content":  { /* payload, per encoding */ }
@@ -47,6 +51,11 @@ Request — the data and its provenance, never the requestor:
   (e.g. large or opaque files identified by their path).
 - `encoding: "base64"` → `content` is a JSON string of base64 bytes; decoded to
   JSON when it happens to be JSON, otherwise treated as opaque.
+- `parties` exists **only** so the governing contract can be identified (a
+  contract is provider↔consumer by definition). It is **never** used to
+  determine the owner — that always comes from the data. Only the `contract`
+  matcher reads it, and for that matcher `parties.consumer` is **required**: a
+  request without it fails `422`.
 
 Response:
 
@@ -85,7 +94,13 @@ Rules are evaluated top-down; the first whose `match` matches wins.
 ```jsonc
 {
   "defaultConsentRequired": false,   // returned when no rule matches (set true to fail closed)
-  "defaultScheme": "identifier",
+  "defaultScheme": "identifier",     // identifier | email | did
+  "contractService": {               // required only when a `contract` matcher is used
+    "url":                     "http://consent-facade:8080",
+    "providerSelfDescription": "https://…/participants/urn:ngsi-ld:organization:prov",
+    "timeoutMs":               3000,   // per facade call (default 3000)
+    "resourceCacheTtlMs":      30000   // catalog cache (default 30000; negative disables)
+  },
   "rules": [
     {
       "name": "ngsi-personal-profiles",
@@ -99,10 +114,29 @@ Rules are evaluated top-down; the first whose `match` matches wins.
       "match": { "service": "file-service" },
       "consentRequired": true,
       "matcher": { "type": "path", "pattern": "^/files/(?P<owner>[^/]+)/(?P<resource>.+)$" }
+    },
+    {
+      "name": "ngsi-from-contract",
+      "match": { "service": "mp-data-service" },
+      "consentRequired": true,
+      "matcher": { "type": "contract", "items": "", "itemsIsArray": false,
+                   "owner": "/dataOwner/value", "uriPointer": "/id" }
     }
   ]
 }
 ```
+
+### `contractService`
+
+Points at a **consent-facade** (a provider-local instance) and is required as
+soon as any rule uses the `contract` matcher; `Parse` fails without `url`.
+
+| field | meaning |
+|---|---|
+| `url` | facade base url, e.g. `http://consent-facade:8080`. **Required.** |
+| `providerSelfDescription` | this provider's participant SD url — one side of every contract lookup. May be omitted and supplied per request as `parties.provider`; with neither, a `contract` rule fails `422`. |
+| `timeoutMs` | bounds each facade call. Default `3000`. |
+| `resourceCacheTtlMs` | how long a contract's catalog data resources are reused across requests. Default `30000`; negative disables the cache. Contracts themselves are never cached — they carry the signature state. |
 
 ### Matchers
 
@@ -111,6 +145,37 @@ Rules are evaluated top-down; the first whose `match` matches wins.
 | `json` | structured JSON | `owner` = RFC6901 pointer within each item; `items`+`itemsIsArray` iterate a collection (multi-subject); `resource` fixed or `resourcePointer` | `json-pointer` |
 | `path` | anything (incl. opaque files) | regexp `pattern` with named groups `(?P<owner>…)` and optional `(?P<resource>…)`; needs no body | `whole` |
 | `static` | any | fixed `owner`/`resource` (tests, always-gated routes) | `whole` |
+| `contract` | structured JSON | `owner` = RFC6901 pointer within each item (as `json`); the `dataResource` comes from the **governing contract** instead of config — see below | `json-pointer` |
+
+#### The `contract` matcher
+
+The owner still comes from the data; what the contract adds is **which data
+resource** the claim is about, in the catalog's own vocabulary.
+
+1. `parties.consumer` (required) plus the provider SD identify the **signed**
+   contracts at the facade — only `status: "signed"` counts.
+2. The requested object's URI (read from `uriPointer` within each item) is
+   matched against each contract policy's ODRL `assetTarget`. A policy that
+   **prohibits** that URI never governs it, even if it also permits it.
+3. The governing contract's service offering is dereferenced, and its first
+   catalog resource with `containsPII: true` becomes the claim's
+   `dataResource`. A contract that declares no PII resource yields an
+   owner-level claim (no `dataResource`) rather than silently allowing.
+
+| option | meaning |
+|---|---|
+| `owner` | RFC6901 pointer to the owner within each item. **Required.** |
+| `uriPointer` | RFC6901 pointer to the requested object's URI within each item. Default `/id` (NGSI-LD and most JSON-LD payloads). |
+| `items` | RFC6901 pointer to the collection/item root; `""` = the whole body. |
+| `itemsIsArray` | `true` → each element of `items` yields its own claim. |
+| `participant` | optional lookup scope, copied onto every claim. |
+
+`consentRequired` is still the rule's own flag: `containsPII` selects *which*
+resource the claim names, it does not decide *whether* consent is checked.
+
+Every failure here is fail-closed: no consumer, no provider, no signed
+contract, no contract targeting the object, or no owner in the data all produce
+`422`.
 
 `dataResource` values MUST use the same vocabulary the privacy notice / consent
 are expressed in (`Consent.data[].resource`) — that shared taxonomy is the real
