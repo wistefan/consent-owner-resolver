@@ -41,9 +41,9 @@ const (
 // resolves owners by their per-participant identifier.
 const defaultScheme = SchemeIdentifier
 
-// validSchemes is the closed set a configured scheme must belong to. A typo
-// ("identifer") would otherwise ship to the plugin and change which lookup the
-// consent check performs, with nothing to notice it.
+// validSchemes is the closed set a configured scheme must belong to. A
+// misspelled scheme would otherwise ship to the plugin and change which lookup
+// the consent check performs, with nothing anywhere to notice it.
 var validSchemes = []string{SchemeIdentifier, SchemeEmail, SchemeDID}
 
 // rawConfig is the on-disk (JSON) configuration.

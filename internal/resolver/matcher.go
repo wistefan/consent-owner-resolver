@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 )
 
 // Matcher turns a matched request (plus the request body, decoded on demand)
@@ -117,9 +116,12 @@ type jsonMatcher struct {
 	participant  string
 }
 
+// jsonMatcherName labels this matcher in error messages.
+const jsonMatcherName = "json matcher"
+
 func newJSONMatcher(m rawMatcher) (Matcher, error) {
 	if m.Owner == "" {
-		return nil, errors.New("json matcher: 'owner' pointer is required")
+		return nil, errors.New(jsonMatcherName + ": 'owner' pointer is required")
 	}
 	// resource is optional (owner-level consent); 'resourcePointer' or a fixed
 	// 'resource' may be supplied when per-resource consent is used.
@@ -139,44 +141,21 @@ func (m *jsonMatcher) Claims(_ context.Context, _ ResolveRequest, body Payload) 
 		return nil, err
 	}
 	if decoded == nil {
-		return nil, errors.New("json matcher: a JSON body is required but none was decoded")
+		return nil, errors.New(jsonMatcherName + ": a JSON body is required but none was decoded")
 	}
-	root, ok := getJSONPointer(decoded, m.items)
-	if !ok {
-		return nil, fmt.Errorf("json matcher: no data at items pointer %q", m.items)
-	}
-	if !m.itemsIsArray {
-		claim, err := m.claimForItem(root, m.items)
-		if err != nil {
-			return nil, err
-		}
-		return []Claim{claim}, nil
-	}
-	arr, ok := root.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("json matcher: value at %q is not an array", m.items)
-	}
-	claims := make([]Claim, 0, len(arr))
-	for i, item := range arr {
-		claim, err := m.claimForItem(item, joinPointer(m.items, strconv.Itoa(i)))
-		if err != nil {
-			return nil, err
-		}
-		claims = append(claims, claim)
-	}
-	return claims, nil
+	return claimsPerItem(decoded, m.items, m.itemsIsArray, jsonMatcherName, m.claimForItem)
 }
 
 func (m *jsonMatcher) claimForItem(item interface{}, selector string) (Claim, error) {
 	owner, ok := pointerString(item, m.ownerPtr)
 	if !ok || owner == "" {
-		return Claim{}, fmt.Errorf("json matcher: no owner at %q", m.ownerPtr)
+		return Claim{}, fmt.Errorf("%s: no owner at %q", jsonMatcherName, m.ownerPtr)
 	}
 	resource := m.resource
 	if m.resourcePtr != "" {
 		r, ok := pointerString(item, m.resourcePtr)
 		if !ok || r == "" {
-			return Claim{}, fmt.Errorf("json matcher: no resource at %q", m.resourcePtr)
+			return Claim{}, fmt.Errorf("%s: no resource at %q", jsonMatcherName, m.resourcePtr)
 		}
 		resource = r
 	}

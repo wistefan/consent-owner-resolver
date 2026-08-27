@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"consent-owner-resolver/internal/contract"
 )
@@ -63,19 +62,22 @@ type contractMatcher struct {
 	participant  string
 }
 
+// contractMatcherName labels this matcher in error messages.
+const contractMatcherName = "contract matcher"
+
 // defaultURIPointer is where the requested object's URI is read from when the
 // matcher config does not say otherwise (NGSI-LD and most JSON-LD payloads).
 const defaultURIPointer = "/id"
 
 func newContractMatcher(m rawMatcher, client contractLookup, providerSD string) (Matcher, error) {
 	if client == nil {
-		return nil, errors.New("contract matcher: contractService is not configured")
+		return nil, errors.New(contractMatcherName + ": contractService is not configured")
 	}
 	// providerSD may be empty: the provider self-description is usually supplied
 	// per request (parties.provider) because it embeds an id only known once the
 	// participant is registered. It is then required at request time.
 	if m.Owner == "" {
-		return nil, errors.New("contract matcher: 'owner' pointer is required")
+		return nil, errors.New(contractMatcherName + ": 'owner' pointer is required")
 	}
 	uriPtr := m.URIPointer
 	if uriPtr == "" {
@@ -141,7 +143,7 @@ func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, body P
 		return nil, err
 	}
 	if decoded == nil {
-		return nil, errors.New("contract matcher: a JSON body is required but none was decoded")
+		return nil, errors.New(contractMatcherName + ": a JSON body is required but none was decoded")
 	}
 	consumer := ""
 	provider := m.providerSD
@@ -152,65 +154,44 @@ func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, body P
 		}
 	}
 	if consumer == "" {
-		return nil, errors.New("contract matcher: parties.consumer is required to identify the contract")
+		return nil, errors.New(contractMatcherName + ": parties.consumer is required to identify the contract")
 	}
 	if provider == "" {
-		return nil, errors.New("contract matcher: no provider self-description (set parties.provider or contractService.providerSelfDescription)")
+		return nil, errors.New(contractMatcherName + ": no provider self-description (set parties.provider or contractService.providerSelfDescription)")
 	}
 
 	contracts, err := m.client.SignedContracts(ctx, provider, consumer)
 	if err != nil {
-		return nil, fmt.Errorf("contract matcher: contract lookup failed: %w", err)
+		return nil, fmt.Errorf("%s: contract lookup failed: %w", contractMatcherName, err)
 	}
 	if len(contracts) == 0 {
-		return nil, fmt.Errorf("contract matcher: no signed contract between %q and %q", provider, consumer)
+		return nil, fmt.Errorf("%s: no signed contract between %q and %q", contractMatcherName, provider, consumer)
 	}
 
 	resources := newPerRequestResources(m.client)
-	root, ok := getJSONPointer(decoded, m.items)
-	if !ok {
-		return nil, fmt.Errorf("contract matcher: no data at items pointer %q", m.items)
-	}
-	if !m.itemsIsArray {
-		claim, err := m.claimForItem(ctx, resources, contracts, root, m.items)
-		if err != nil {
-			return nil, err
-		}
-		return []Claim{claim}, nil
-	}
-	arr, ok := root.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("contract matcher: value at %q is not an array", m.items)
-	}
-	claims := make([]Claim, 0, len(arr))
-	for i, item := range arr {
-		claim, err := m.claimForItem(ctx, resources, contracts, item, joinPointer(m.items, strconv.Itoa(i)))
-		if err != nil {
-			return nil, err
-		}
-		claims = append(claims, claim)
-	}
-	return claims, nil
+	return claimsPerItem(decoded, m.items, m.itemsIsArray, contractMatcherName, func(item interface{}, selector string) (Claim, error) {
+		return m.claimForItem(ctx, resources, contracts, item, selector)
+	})
 }
 
 func (m *contractMatcher) claimForItem(ctx context.Context, resources *perRequestResources, contracts []contract.Contract, item interface{}, selector string) (Claim, error) {
 	owner, ok := pointerString(item, m.ownerPtr)
 	if !ok || owner == "" {
-		return Claim{}, fmt.Errorf("contract matcher: no owner at %q", m.ownerPtr)
+		return Claim{}, fmt.Errorf("%s: no owner at %q", contractMatcherName, m.ownerPtr)
 	}
 	requestedURI, ok := pointerString(item, m.uriPtr)
 	if !ok || requestedURI == "" {
-		return Claim{}, fmt.Errorf("contract matcher: no requested-object URI at %q", m.uriPtr)
+		return Claim{}, fmt.Errorf("%s: no requested-object URI at %q", contractMatcherName, m.uriPtr)
 	}
 
 	governing, found := findContractForTarget(contracts, requestedURI)
 	if !found {
-		return Claim{}, fmt.Errorf("contract matcher: no contract rule targets %q", requestedURI)
+		return Claim{}, fmt.Errorf("%s: no contract rule targets %q", contractMatcherName, requestedURI)
 	}
 
 	resource, err := resources.pii(ctx, governing)
 	if err != nil {
-		return Claim{}, fmt.Errorf("contract matcher: resolving data resources of contract %q: %w", governing.ID, err)
+		return Claim{}, fmt.Errorf("%s: resolving data resources of contract %q: %w", contractMatcherName, governing.ID, err)
 	}
 	if !resource.found {
 		// The contract governs this object but declares no PII resource: nothing to
