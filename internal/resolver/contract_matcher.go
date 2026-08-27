@@ -132,7 +132,11 @@ func (p *perRequestResources) pii(ctx context.Context, c contract.Contract) (pii
 // request, and each contract's catalog data resources at most once per request
 // (see perRequestResources), so a 50-entity collection costs one facade
 // round-trip per DISTINCT governing contract rather than fifty.
-func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, decoded interface{}) ([]Claim, error) {
+func (m *contractMatcher) Claims(ctx context.Context, req ResolveRequest, body Payload) ([]Claim, error) {
+	decoded, err := body.JSON()
+	if err != nil {
+		return nil, err
+	}
 	if decoded == nil {
 		return nil, errors.New("contract matcher: a JSON body is required but none was decoded")
 	}

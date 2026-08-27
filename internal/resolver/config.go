@@ -229,19 +229,20 @@ func buildMatcher(m rawMatcher, contractClient contractLookup, providerSD string
 	}
 }
 
-// Resolve implements Resolver: it decodes the body once, finds the first
-// matching rule, and delegates claim extraction to that rule's matcher. When no
-// rule matches it returns the configured default.
+// Resolve implements Resolver: it finds the first matching rule and delegates
+// claim extraction to that rule's matcher. When no rule matches it returns the
+// configured default.
+//
+// The body is decoded lazily and at most once (see lazyPayload): a rule whose
+// matcher never reads it - `path`, `static` - must still answer when the payload
+// is undecodable, and no rule should pay for a decode it does not use.
 func (r *ConfigResolver) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error) {
-	decoded, err := decodeJSONBody(req.Body)
-	if err != nil {
-		return ResolveResult{}, err
-	}
+	body := newLazyPayload(req.Body)
 	for _, rule := range r.rules {
 		if !rule.matches(req) {
 			continue
 		}
-		claims, err := rule.matcher.Claims(ctx, req, decoded)
+		claims, err := rule.matcher.Claims(ctx, req, body)
 		if err != nil {
 			return ResolveResult{}, err
 		}

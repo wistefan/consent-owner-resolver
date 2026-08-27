@@ -205,6 +205,56 @@ func TestResolve_OwnerOnly_Path(t *testing.T) {
 	}
 }
 
+func TestResolve_BodylessMatchersIgnoreAnUndecodablePayload(t *testing.T) {
+	// A `path` matcher needs no body, so a payload it never looks at must not
+	// turn a resolvable request into a 422.
+	cases := map[string]*Body{
+		"illegal base64":      {Encoding: EncodingBase64, Content: json.RawMessage(`"!!!not-base64!!!"`)},
+		"base64 not a string": {Encoding: EncodingBase64, Content: json.RawMessage(`{"nope":1}`)},
+		"malformed json":      {Encoding: EncodingJSON, Content: json.RawMessage(`{"unclosed":`)},
+		"unknown encoding":    {Encoding: "protobuf", Content: json.RawMessage(`"AAA"`)},
+	}
+	r := mustParse(t, `{
+	  "rules": [{
+	    "match": {"service": "file-service"},
+	    "consentRequired": true,
+	    "matcher": {"type": "path", "pattern": "^/files/(?P<owner>[^/]+)/(?P<resource>.+)$"}
+	  }]
+	}`)
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			res, err := r.Resolve(context.Background(), ResolveRequest{
+				Resource: Resource{Service: "file-service", Path: "/files/alice-42/report.pdf"},
+				Body:     body,
+			})
+			if err != nil {
+				t.Fatalf("a body-less matcher must not fail on an undecodable payload: %v", err)
+			}
+			if len(res.Claims) != 1 || res.Claims[0].OwnerID != "alice-42" {
+				t.Fatalf("unexpected claims: %+v", res.Claims)
+			}
+		})
+	}
+}
+
+func TestResolve_UndecodableBodyStillFailsForJSONMatchers(t *testing.T) {
+	// The laziness must not swallow the error where the matcher does need JSON.
+	r := mustParse(t, `{
+	  "rules": [{
+	    "match": {"service": "svc"},
+	    "consentRequired": true,
+	    "matcher": {"type": "json", "owner": "/dataOwner"}
+	  }]
+	}`)
+	_, err := r.Resolve(context.Background(), ResolveRequest{
+		Resource: Resource{Service: "svc", Path: "/x"},
+		Body:     &Body{Encoding: EncodingJSON, Content: json.RawMessage(`{"unclosed":`)},
+	})
+	if err == nil {
+		t.Fatal("a json matcher must still fail on an undecodable body")
+	}
+}
+
 func TestResolve_DefaultNoMatch_PassThrough(t *testing.T) {
 	r := mustParse(t, `{"rules": [{"match": {"service": "other"}, "consentRequired": true, "matcher": {"type": "static", "owner": "x"}}]}`)
 	res, err := r.Resolve(context.Background(), ResolveRequest{Resource: Resource{Service: "unknown", Path: "/x"}})

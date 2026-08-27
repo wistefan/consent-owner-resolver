@@ -92,6 +92,12 @@ func newContractResolver(t *testing.T, stub contractLookup, itemsIsArray bool) M
 	return m
 }
 
+// decoded presents an already-decoded JSON value as a Payload, so matcher tests
+// can pass Go literals instead of encoding a body first.
+type decoded struct{ v interface{} }
+
+func (d decoded) JSON() (interface{}, error) { return d.v, nil }
+
 func entity(id, owner string) map[string]interface{} {
 	return map[string]interface{}{
 		"id":        id,
@@ -111,7 +117,7 @@ func TestContractMatcher_ResourceFromContractTarget(t *testing.T) {
 	stub := &stubLookup{contracts: []contract.Contract{contractWithTarget(testAssetURI)}, resources: piiResources()}
 	m := newContractResolver(t, stub, false)
 
-	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner"))
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")})
 	if err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
@@ -164,7 +170,7 @@ func TestContractMatcher_Errors(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			m := newContractResolver(t, c.stub, false)
-			if _, err := m.Claims(context.Background(), c.req, c.item); err == nil {
+			if _, err := m.Claims(context.Background(), c.req, decoded{c.item}); err == nil {
 				t.Fatalf("expected an error for %s (must fail closed)", name)
 			}
 		})
@@ -179,7 +185,7 @@ func TestContractMatcher_CollectionOneClaimPerItem(t *testing.T) {
 	m := newContractResolver(t, stub, true)
 
 	body := []interface{}{entity(testAssetURI, "did:key:zAlice"), entity(other, "did:key:zBob")}
-	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), body)
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{body})
 	if err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
@@ -213,7 +219,7 @@ func TestContractMatcher_ResourcesFetchedOncePerContract(t *testing.T) {
 	for i := 0; i < items; i++ {
 		body = append(body, entity(testAssetURI, "did:key:zOwner"))
 	}
-	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), body)
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{body})
 	if err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
@@ -236,7 +242,7 @@ func TestContractMatcher_ProhibitedTargetDoesNotGovern(t *testing.T) {
 	stub := &stubLookup{contracts: []contract.Contract{prohibiting}, resources: piiResources()}
 	m := newContractResolver(t, stub, false)
 
-	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner")); err == nil {
+	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")}); err == nil {
 		t.Fatal("a prohibited asset must not be governed by that contract")
 	}
 }
@@ -247,7 +253,7 @@ func TestContractMatcher_ProhibitionOnAnotherAssetIsIrrelevant(t *testing.T) {
 	stub := &stubLookup{contracts: []contract.Contract{governing}, resources: piiResources()}
 	m := newContractResolver(t, stub, false)
 
-	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner"))
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")})
 	if err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
@@ -262,7 +268,7 @@ func TestContractMatcher_NoPIIResourceStaysOwnerLevel(t *testing.T) {
 		resources: []contract.DataResource{{ID: "http://facade/catalog/dataresources/plain", ContainsPII: false}},
 	}
 	m := newContractResolver(t, stub, false)
-	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner"))
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")})
 	if err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
@@ -280,7 +286,7 @@ func TestContractMatcher_ProviderFromRequestOverridesConfig(t *testing.T) {
 	}
 	req := requestWithConsumer(testConsumerSD)
 	req.Parties.Provider = "http://facade/participants/urn:ngsi-ld:organization:from-request"
-	if _, err := m.Claims(context.Background(), req, entity(testAssetURI, "did:key:zOwner")); err != nil {
+	if _, err := m.Claims(context.Background(), req, decoded{entity(testAssetURI, "did:key:zOwner")}); err != nil {
 		t.Fatalf("Claims: %v", err)
 	}
 	if stub.gotProvider != req.Parties.Provider {
@@ -294,7 +300,7 @@ func TestContractMatcher_NoProviderAnywhereFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newContractMatcher: %v", err)
 	}
-	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner")); err == nil {
+	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")}); err == nil {
 		t.Fatal("expected an error when no provider self-description is available")
 	}
 }

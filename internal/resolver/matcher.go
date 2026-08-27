@@ -25,12 +25,16 @@ import (
 	"strconv"
 )
 
-// Matcher turns a matched request (plus an optionally-decoded JSON body) into a
-// set of claims. Returning zero claims with no error means "matched, but no
-// data owner found here"; returning an error means "consent is required but the
-// owner could not be resolved" — the plugin then applies its fail policy.
+// Matcher turns a matched request (plus the request body, decoded on demand)
+// into a set of claims. Returning zero claims with no error means "matched, but
+// no data owner found here"; returning an error means "consent is required but
+// the owner could not be resolved" — the plugin then applies its fail policy.
+//
+// The body arrives as a Payload rather than an already-decoded value so that a
+// matcher which never reads it (path, static) cannot fail on an undecodable
+// payload.
 type Matcher interface {
-	Claims(ctx context.Context, req ResolveRequest, decoded interface{}) ([]Claim, error)
+	Claims(ctx context.Context, req ResolveRequest, body Payload) ([]Claim, error)
 }
 
 // --- path matcher: format-agnostic; derives the owner from the request path ---
@@ -71,7 +75,7 @@ func newPathMatcher(m rawMatcher) (Matcher, error) {
 	return &pathMatcher{re: re, ownerGroup: ownerGroup, resGroup: resGroup, resource: m.Resource, participant: m.Participant}, nil
 }
 
-func (m *pathMatcher) Claims(_ context.Context, req ResolveRequest, _ interface{}) ([]Claim, error) {
+func (m *pathMatcher) Claims(_ context.Context, req ResolveRequest, _ Payload) ([]Claim, error) {
 	sub := m.re.FindStringSubmatch(req.Resource.Path)
 	if sub == nil {
 		return nil, fmt.Errorf("path matcher: path %q did not match the extraction pattern", req.Resource.Path)
@@ -123,7 +127,11 @@ func newJSONMatcher(m rawMatcher) (Matcher, error) {
 	}, nil
 }
 
-func (m *jsonMatcher) Claims(_ context.Context, _ ResolveRequest, decoded interface{}) ([]Claim, error) {
+func (m *jsonMatcher) Claims(_ context.Context, _ ResolveRequest, body Payload) ([]Claim, error) {
+	decoded, err := body.JSON()
+	if err != nil {
+		return nil, err
+	}
 	if decoded == nil {
 		return nil, errors.New("json matcher: a JSON body is required but none was decoded")
 	}
@@ -186,7 +194,7 @@ func newStaticMatcher(m rawMatcher) (Matcher, error) {
 	return &staticMatcher{owner: m.Owner, resource: m.Resource, participant: m.Participant}, nil
 }
 
-func (m *staticMatcher) Claims(_ context.Context, _ ResolveRequest, _ interface{}) ([]Claim, error) {
+func (m *staticMatcher) Claims(_ context.Context, _ ResolveRequest, _ Payload) ([]Claim, error) {
 	if m.owner == "" {
 		return nil, nil
 	}

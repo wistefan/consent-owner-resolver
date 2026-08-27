@@ -78,6 +78,35 @@ func pointerString(item interface{}, pointer string) (string, bool) {
 	return s, ok
 }
 
+// Payload gives a matcher access to the request body as decoded JSON. It is
+// decoded on FIRST USE, not up front: a matcher that needs no body (path,
+// static) must not be broken by a payload it never looks at.
+type Payload interface {
+	// JSON returns the decoded body, or nil when there is no usable JSON payload
+	// (EncodingNone, or opaque base64 that is not JSON).
+	JSON() (interface{}, error)
+}
+
+// lazyPayload decodes b at most once, on the first JSON call. Requests are
+// handled by a single goroutine, so no locking is needed.
+type lazyPayload struct {
+	body    *Body
+	decoded interface{}
+	err     error
+	done    bool
+}
+
+func newLazyPayload(b *Body) *lazyPayload { return &lazyPayload{body: b} }
+
+// JSON implements Payload.
+func (p *lazyPayload) JSON() (interface{}, error) {
+	if !p.done {
+		p.decoded, p.err = decodeJSONBody(p.body)
+		p.done = true
+	}
+	return p.decoded, p.err
+}
+
 // decodeJSONBody turns an optional request Body into a decoded JSON value, or
 // nil when there is no usable JSON payload (EncodingNone, or opaque base64 that
 // is not JSON). A JSON body that fails to parse is a client error.
