@@ -105,9 +105,11 @@ Response:
 The resolver sits on the synchronous path of every proxied request while fanning
 out to the consent-facade, so p99 latency and failure rate are what you will
 want the first time the gateway starts timing out. `class` is the failing
-component (`json matcher`, `contract matcher`, …), never the error detail; the
-labels deliberately carry **no request path and no owner**, so `/metrics` is
-safe to scrape without the shared secret.
+component (`json matcher`, `contract matcher`, …), never the error detail, and
+comes from a closed set; the labels deliberately carry **no request path and no
+owner**, so `/metrics` is safe to scrape without the shared secret. It is served
+on the same port as `/resolve`, so a scrape needs its own NetworkPolicy rule —
+see [Deployment](#deployment-this-service-is-cluster-internal).
 
 ### Correlation
 
@@ -244,7 +246,8 @@ probe which services and paths are gated, harvest owner ids (a `path`-matcher
 route returns `ownerId` from the path with no body at all), and enumerate which
 contracts exist between arbitrary provider/consumer pairs by varying `parties`.
 
-Restrict it to the plugin with a NetworkPolicy:
+Restrict it to the plugin — and to Prometheus, which needs `/metrics` on the
+same port — with a NetworkPolicy:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -262,7 +265,21 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    # /metrics is on the same port, so a scrape needs its own rule. Drop this
+    # rule if you do not scrape the resolver; ingress is deny-by-default, so
+    # without it Prometheus simply cannot reach it.
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - protocol: TCP
+          port: 8080
 ```
+
+A NetworkPolicy admits whole ports, not paths, so the monitoring rule also
+reaches `/resolve`. That is what `AUTH_TOKEN` is for: with it set, the scrape
+still works (`/metrics` is exempt) while `/resolve` needs the secret even from
+inside the cluster.
 
 Where the plugin and the resolver do not share a trust boundary, set
 `AUTH_TOKEN` on the resolver and have the plugin send
