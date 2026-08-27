@@ -125,7 +125,16 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		// A resolution error means "consent may be required but the owner could
 		// not be determined". Surface it as 4xx so the plugin applies its fail
 		// policy (deny by default); it never means "no consent needed".
+		//
+		// The plugin distinguishes the two 4xx cases, so they must not be
+		// conflated: a payload the resolver cannot decode is the caller's bug
+		// (400), an owner it cannot determine is not (422).
 		log.Printf("[owner-resolver] resolve failed for %s %s: %v", req.Resource.Method, req.Resource.Path, err)
+		var badRequest *resolver.BadRequestError
+		if errors.As(err, &badRequest) {
+			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
 		writeError(w, http.StatusUnprocessableEntity, "cannot resolve owner: "+err.Error())
 		return
 	}

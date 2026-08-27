@@ -107,6 +107,24 @@ func (p *lazyPayload) JSON() (interface{}, error) {
 	return p.decoded, p.err
 }
 
+// BadRequestError marks an error caused by the CALLER's payload - a body that
+// cannot be decoded at all - as opposed to "consent may be required but the
+// owner could not be resolved". The two mean different things to the plugin,
+// which keys its fail policy off the status code, so the HTTP binding maps this
+// one to 400 and everything else to 422.
+type BadRequestError struct{ Err error }
+
+// Error implements error.
+func (e *BadRequestError) Error() string { return e.Err.Error() }
+
+// Unwrap gives errors.Is/errors.As access to the cause.
+func (e *BadRequestError) Unwrap() error { return e.Err }
+
+// badRequestf builds a BadRequestError with a formatted message.
+func badRequestf(format string, args ...interface{}) error {
+	return &BadRequestError{Err: fmt.Errorf(format, args...)}
+}
+
 // decodeJSONBody turns an optional request Body into a decoded JSON value, or
 // nil when there is no usable JSON payload (EncodingNone, or opaque base64 that
 // is not JSON). A JSON body that fails to parse is a client error.
@@ -123,17 +141,17 @@ func decodeJSONBody(b *Body) (interface{}, error) {
 		}
 		var v interface{}
 		if err := json.Unmarshal(b.Content, &v); err != nil {
-			return nil, fmt.Errorf("decode json body: %w", err)
+			return nil, badRequestf("decode json body: %w", err)
 		}
 		return v, nil
 	case EncodingBase64:
 		var s string
 		if err := json.Unmarshal(b.Content, &s); err != nil {
-			return nil, fmt.Errorf("base64 body must be a JSON string: %w", err)
+			return nil, badRequestf("base64 body must be a JSON string: %w", err)
 		}
 		raw, err := base64.StdEncoding.DecodeString(s)
 		if err != nil {
-			return nil, fmt.Errorf("decode base64 body: %w", err)
+			return nil, badRequestf("decode base64 body: %w", err)
 		}
 		var v interface{}
 		if err := json.Unmarshal(raw, &v); err != nil {
@@ -143,6 +161,6 @@ func decodeJSONBody(b *Body) (interface{}, error) {
 		}
 		return v, nil
 	default:
-		return nil, fmt.Errorf("unknown body encoding %q", b.Encoding)
+		return nil, badRequestf("unknown body encoding %q", b.Encoding)
 	}
 }

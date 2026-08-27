@@ -116,6 +116,33 @@ func TestHandler_UnresolvableIsClientError(t *testing.T) {
 	}
 }
 
+func TestHandler_StatusCodesMatchTheDocumentedContract(t *testing.T) {
+	// The plugin keys its fail policy off these codes, so the split matters:
+	// 400 = the caller's payload is broken, 422 = the owner is unresolvable.
+	cases := map[string]struct {
+		body       string
+		wantStatus int
+	}{
+		"valid json, no owner in it": {body: `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"json","content":"not-an-object"}}`, wantStatus: http.StatusUnprocessableEntity},
+		"illegal base64 body":        {body: `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"base64","content":"!!!not-base64!!!"}}`, wantStatus: http.StatusBadRequest},
+		"unknown body encoding":      {body: `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"protobuf","content":"AAA"}}`, wantStatus: http.StatusBadRequest},
+		// Opaque base64 bytes that are not JSON are not a decode failure: the
+		// body is simply unusable to a json matcher.
+		"opaque base64 bytes":  {body: `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"base64","content":"eyJ1bmNsb3NlZCI6"}}`, wantStatus: http.StatusUnprocessableEntity},
+		"owner not resolvable": {body: `{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"json","content":{"id":"x"}}}`, wantStatus: http.StatusUnprocessableEntity},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHandler(t)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(tc.body)))
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("want %d, got %d (%s)", tc.wantStatus, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandler_MethodNotAllowed(t *testing.T) {
 	h := newTestHandler(t)
 	rec := httptest.NewRecorder()
