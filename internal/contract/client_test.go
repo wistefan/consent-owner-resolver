@@ -22,6 +22,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,77 @@ func TestDataResources_FetchesLocallyButKeepsCanonicalIDs(t *testing.T) {
 	}
 	if len(fetched) != 2 {
 		t.Fatalf("expected 2 local fetches, got %v", fetched)
+	}
+}
+
+func TestEncodeParticipant(t *testing.T) {
+	// This is a WIRE CONTRACT with the consent-facade, not an implementation
+	// detail: the expected strings are written out rather than computed, so a
+	// change to the alphabet fails here instead of at integration time.
+	cases := map[string]struct {
+		selfDescriptionURL string
+		want               string
+	}{
+		"http participant sd": {
+			selfDescriptionURL: "http://facade/participants/urn:ngsi-ld:organization:prov",
+			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvdXJuOm5nc2ktbGQ6b3JnYW5pemF0aW9uOnByb3Y",
+		},
+		"did consumer": {
+			selfDescriptionURL: "did:web:fancy-marketplace.biz",
+			want:               "ZGlkOndlYjpmYW5jeS1tYXJrZXRwbGFjZS5iaXo",
+		},
+		// `~` is what makes the standard alphabet reachable here: it is used
+		// throughout this project's identifiers.
+		"tilde in the identifier": {
+			selfDescriptionURL: "http://facade/participants/default~urn:ngsi-ld:organization:prov",
+			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvZGVmYXVsdH51cm46bmdzaS1sZDpvcmdhbml6YXRpb246cHJvdg",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := encodeParticipant(tc.selfDescriptionURL)
+			if got != tc.want {
+				t.Fatalf("encodeParticipant(%q) = %q, want %q", tc.selfDescriptionURL, got, tc.want)
+			}
+			// Round-trip: whatever the facade decodes it with must yield the
+			// original URL.
+			decoded, err := participantEncoding.DecodeString(got)
+			if err != nil {
+				t.Fatalf("decode %q: %v", got, err)
+			}
+			if string(decoded) != tc.selfDescriptionURL {
+				t.Fatalf("round-trip gave %q, want %q", decoded, tc.selfDescriptionURL)
+			}
+			// The whole point of the alphabet: nothing needs escaping, so a
+			// proxy cannot normalize the path segment out from under us.
+			if url.PathEscape(got) != got {
+				t.Fatalf("encoded participant %q needs path escaping", got)
+			}
+		})
+	}
+}
+
+func TestSignedContracts_UsesTheEncodedParticipantsInThePath(t *testing.T) {
+	const providerSD = "http://facade/participants/default~urn:ngsi-ld:organization:prov"
+	const consumerSD = "did:web:fancy-marketplace.biz"
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// EscapedPath is what actually goes on the wire; RequestURI would hide a
+		// percent-encoding problem behind Go's own decoding.
+		gotPath = r.URL.EscapedPath()
+		_, _ = w.Write([]byte(`{"verified":true,"contracts":[]}`))
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL, 0).SignedContracts(context.Background(), providerSD, consumerSD); err != nil {
+		t.Fatalf("SignedContracts: %v", err)
+	}
+	want := "/verify/" + encodeParticipant(providerSD) + "/" + encodeParticipant(consumerSD)
+	if gotPath != want {
+		t.Fatalf("facade saw path %q, want %q", gotPath, want)
+	}
+	if strings.Contains(gotPath, "%") {
+		t.Fatalf("the path must carry no percent-encoding a proxy could normalize: %q", gotPath)
 	}
 }
 

@@ -145,10 +145,33 @@ func NewClient(baseURL string, timeoutMs int) *Client {
 	}
 }
 
+// participantEncoding is the base64 alphabet used for participant
+// self-description URLs in facade path parameters.
+//
+// It MUST match what the consent-facade decodes - this is a wire contract, not
+// an implementation detail, and TestEncodeParticipant pins it.
+//
+// Raw URL encoding (RFC 4648 §5, unpadded) rather than the standard alphabet,
+// because every character it can emit is already safe in a path segment:
+//
+//	standard : A-Za-z0-9 + / =   -- `/` would go on the wire as %2F, which nginx
+//	                                and APISIX commonly normalize back to `/`,
+//	                                silently changing the path; `=` padding is
+//	                                always present for inputs of the wrong length
+//	raw url  : A-Za-z0-9 - _     -- nothing to escape, nothing to normalize
+//
+// The `+` and `/` cases only arise for SD URLs containing `?`, `>` or `~`, which
+// ordinary ones do not - but `~` is used throughout this project's identifiers
+// (`default~urn:ngsi-ld:agreement:1`), so the class is reachable rather than
+// theoretical.
+var participantEncoding = base64.RawURLEncoding
+
 // encodeParticipant renders a participant self-description URL the way the
-// facade's path parameters expect it (base64 of the SD URL).
+// facade's path parameters expect it (see participantEncoding). The result needs
+// no further escaping: the alphabet contains no character that is special in a
+// path segment.
 func encodeParticipant(selfDescriptionURL string) string {
-	return base64.StdEncoding.EncodeToString([]byte(selfDescriptionURL))
+	return participantEncoding.EncodeToString([]byte(selfDescriptionURL))
 }
 
 // SignedContracts returns the SIGNED contracts between a provider and a
@@ -157,7 +180,7 @@ func encodeParticipant(selfDescriptionURL string) string {
 // in some other state (terminated, revoked, pending, ...) - see IsSigned.
 func (c *Client) SignedContracts(ctx context.Context, providerSD, consumerSD string) ([]Contract, error) {
 	endpoint := fmt.Sprintf("%s/verify/%s/%s", c.baseURL,
-		url.PathEscape(encodeParticipant(providerSD)), url.PathEscape(encodeParticipant(consumerSD)))
+		encodeParticipant(providerSD), encodeParticipant(consumerSD))
 	var out verifyResponse
 	if err := c.getJSON(ctx, endpoint, &out); err != nil {
 		return nil, err
