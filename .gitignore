@@ -1,0 +1,12 @@
+# Build artifacts
+owner-resolver
+coverage.out
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store

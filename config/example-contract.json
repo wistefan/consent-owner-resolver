@@ -1,0 +1,36 @@
+{
+  "defaultConsentRequired": true,
+  "defaultScheme": "did",
+  "contractService": {
+    "url": "http://consent-facade:8080",
+    "providerSelfDescription": "http://consent-facade:8080/participants/urn:ngsi-ld:organization:provider",
+    "timeoutMs": 3000,
+    "resourceCacheTtlMs": 30000
+  },
+  "rules": [
+    {
+      "name": "ngsi-entity-from-contract",
+      "match": { "service": "mp-data-service" },
+      "consentRequired": true,
+      "matcher": {
+        "type": "contract",
+        "items": "",
+        "itemsIsArray": false,
+        "owner": "/dataOwner/value",
+        "uriPointer": "/id"
+      }
+    },
+    {
+      "name": "ngsi-collection-from-contract",
+      "match": { "service": "mp-data-service-list" },
+      "consentRequired": true,
+      "matcher": {
+        "type": "contract",
+        "items": "",
+        "itemsIsArray": true,
+        "owner": "/dataOwner/value",
+        "uriPointer": "/id"
+      }
+    }
+  ]
+}

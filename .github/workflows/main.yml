@@ -1,0 +1,56 @@
+name: Main
+
+# The same checks on every push to main - so a direct commit cannot bypass them -
+# followed by the release. `release` gates on license-headers as well as the
+# tests, so a version can never ship code that lacks the copyright header.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
+
+# A reusable workflow's token can never be wider than its caller's, and once a
+# `permissions:` block is present every unlisted scope is denied. So every scope
+# any called workflow needs must be granted here:
+#   contents: write      -> release.yml / git-release creates the tag and release
+#   pull-requests: read  -> release.yml / generate-version reads the merged PR's
+#                           semver label (without it the lookup returns nothing
+#                           and the whole release is skipped SILENTLY)
+#   security-events: write -> security-analysis.yml uploads SARIF
+permissions:
+  contents: write
+  pull-requests: read
+  security-events: write
+
+jobs:
+  license-headers:
+    uses: ./.github/workflows/license-headers.yml
+
+  style-guide:
+    uses: ./.github/workflows/style-guide.yml
+
+  build:
+    uses: ./.github/workflows/build.yml
+
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  security-analysis:
+    uses: ./.github/workflows/security-analysis.yml
+
+  release:
+    # Every check gates the release, `build` included: the release compiles the
+    # binary again anyway, and omitting it from `needs` only meant a broken
+    # build could still start a release before failing.
+    needs:
+      - license-headers
+      - style-guide
+      - build
+      - tests
+      - security-analysis
+    uses: ./.github/workflows/release.yml
+    secrets:
+      QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}

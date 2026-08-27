@@ -1,0 +1,74 @@
+name: Security Analysis
+
+# Reusable security scans. Both jobs BLOCK: `main.yml` lists this workflow in
+# the release job's `needs:`, and a gate that can never fail is not a gate.
+# Findings are also uploaded as SARIF so they show up in the Security tab.
+on:
+  workflow_call:
+
+env:
+  # Pinned so a new tool release cannot turn the build red without a code change.
+  GOSEC_VERSION: v2.29.0
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      # SARIF for the Security tab. Non-blocking on its own: the upload is
+      # reporting, the blocking verdict is the step below.
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        continue-on-error: true
+        with:
+          go-version-file: go.mod
+          output-format: sarif
+          output-file: govulncheck-results.sarif
+
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        if: always()
+        with:
+          sarif_file: govulncheck-results.sarif
+
+      # Blocking: any vulnerability reachable from this code fails the build.
+      # govulncheck reports only what is actually called, so a finding here is
+      # real rather than transitive noise.
+      - name: Fail on reachable vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
+  gosec:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
+
+      # `-no-fail` only for the SARIF run, so a finding still produces a report
+      # before the blocking run below stops the build.
+      - name: Report findings
+        run: gosec -no-fail -fmt sarif -out gosec-results.sarif ./...
+
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+
+      # Blocking. A finding that is a false positive gets an inline
+      # `#nosec Gxxx -- <reason>` annotation, which is reviewable in the diff.
+      - name: Fail on findings
+        run: gosec ./...

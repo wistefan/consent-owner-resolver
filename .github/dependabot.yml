@@ -1,0 +1,34 @@
+version: 2
+
+# Every action is pinned to a commit SHA, which is safe but frozen. Dependabot
+# is what keeps those pins current: it rewrites the SHA and the trailing
+# `# <tag>` comment together, so a pin never silently drifts from its version.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - patch
+    commit-message:
+      prefix: ci
+
+  # The service has no dependencies beyond the stdlib, so this ecosystem exists
+  # to catch the `go` directive itself falling out of support.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - patch
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - patch
+    commit-message:
+      prefix: build
