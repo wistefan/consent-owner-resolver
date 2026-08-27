@@ -234,23 +234,71 @@ func TestContractMatcher_ResourcesFetchedOncePerContract(t *testing.T) {
 	}
 }
 
-func TestContractMatcher_ProhibitedTargetDoesNotGovern(t *testing.T) {
-	// A policy that both permits and prohibits the asset is not a grant: with no
-	// other candidate the matcher must fail closed.
-	prohibiting := contractWithTarget(testAssetURI)
-	prohibiting.Policy[0].Prohibition = []contract.Rule{{AssetTarget: testAssetURI, Action: "use"}}
-	stub := &stubLookup{contracts: []contract.Contract{prohibiting}, resources: piiResources()}
-	m := newContractResolver(t, stub, false)
-
-	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")}); err == nil {
-		t.Fatal("a prohibited asset must not be governed by that contract")
+// prohibitionIn returns a policy that prohibits the given asset.
+func prohibitionIn(assetURI string) contract.Policy {
+	return contract.Policy{
+		UID:         "urn:policy:deny",
+		Prohibition: []contract.Rule{{AssetTarget: assetURI, Action: "use"}},
 	}
 }
 
-func TestContractMatcher_ProhibitionOnAnotherAssetIsIrrelevant(t *testing.T) {
-	governing := contractWithTarget(testAssetURI)
-	governing.Policy[0].Prohibition = []contract.Rule{{AssetTarget: "urn:ngsi-ld:PersonalProfile:bob", Action: "use"}}
-	stub := &stubLookup{contracts: []contract.Contract{governing}, resources: piiResources()}
+func TestContractMatcher_ProhibitionScopeIsTheContract(t *testing.T) {
+	// A contract that both permits and prohibits the asset is not a grant for
+	// it, however the two are split across policies. With no other candidate the
+	// matcher must fail closed.
+	samePolicy := contractWithTarget(testAssetURI)
+	samePolicy.Policy[0].Prohibition = []contract.Rule{{AssetTarget: testAssetURI, Action: "use"}}
+
+	separatePolicy := contractWithTarget(testAssetURI)
+	separatePolicy.Policy = append(separatePolicy.Policy, prohibitionIn(testAssetURI))
+
+	prohibitionFirst := contractWithTarget(testAssetURI)
+	prohibitionFirst.Policy = append([]contract.Policy{prohibitionIn(testAssetURI)}, prohibitionFirst.Policy...)
+
+	otherAsset := contractWithTarget(testAssetURI)
+	otherAsset.Policy = append(otherAsset.Policy, prohibitionIn("urn:ngsi-ld:PersonalProfile:bob"))
+
+	cases := map[string]struct {
+		contract   contract.Contract
+		wantGovern bool
+	}{
+		"permitted and prohibited in one policy":   {contract: samePolicy},
+		"permitted and prohibited in two policies": {contract: separatePolicy},
+		"prohibiting policy listed first":          {contract: prohibitionFirst},
+		"prohibition on a different asset":         {contract: otherAsset, wantGovern: true},
+		"permission with no prohibition anywhere":  {contract: contractWithTarget(testAssetURI), wantGovern: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			stub := &stubLookup{contracts: []contract.Contract{tc.contract}, resources: piiResources()}
+			m := newContractResolver(t, stub, false)
+
+			claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")})
+			if !tc.wantGovern {
+				if err == nil {
+					t.Fatalf("a prohibited asset must not be governed, got claims %+v", claims)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Claims: %v", err)
+			}
+			if len(claims) != 1 || claims[0].DataResource != testResourceID {
+				t.Fatalf("unexpected claims: %+v", claims)
+			}
+		})
+	}
+}
+
+func TestContractMatcher_ProhibitionSkipsOnlyTheProhibitingContract(t *testing.T) {
+	// A prohibition disqualifies its own contract, not the search: another
+	// signed contract that permits the asset still governs it.
+	prohibiting := contractWithTarget(testAssetURI)
+	prohibiting.ID = "default~urn:ngsi-ld:agreement:denied"
+	prohibiting.Policy = append(prohibiting.Policy, prohibitionIn(testAssetURI))
+	permitting := contractWithTarget(testAssetURI)
+
+	stub := &stubLookup{contracts: []contract.Contract{prohibiting, permitting}, resources: piiResources()}
 	m := newContractResolver(t, stub, false)
 
 	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), decoded{entity(testAssetURI, "did:key:zOwner")})

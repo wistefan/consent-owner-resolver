@@ -42,8 +42,8 @@ type contractLookup interface {
 //   - the requested object's URI is matched against each rule's ODRL asset target
 //     (`assetTarget`, preserved by the consent-facade); the matching contract's
 //     PII data resource becomes the claim's DataResource. Only SIGNED contracts
-//     are considered (see contract.IsSigned), and a policy that prohibits the
-//     requested URI never governs it;
+//     are considered (see contract.IsSigned), and a contract that prohibits the
+//     requested URI anywhere never governs it;
 //   - `containsPII` selects WHICH catalog resource the claim names. It does NOT
 //     decide whether consent is required: that stays the rule's own
 //     `consentRequired` flag, so the answer to "is this gated?" never depends on
@@ -211,26 +211,48 @@ func (m *contractMatcher) claimForItem(ctx context.Context, resources *perReques
 	}, nil
 }
 
-// findContractForTarget returns the first contract having a permission whose ODRL
-// asset target equals the requested URI and NO prohibition on that same URI.
+// findContractForTarget returns the first contract that permits the requested
+// URI and prohibits it NOWHERE.
 //
-// An ODRL prohibition is not merely the absence of a permission: a policy that
-// both permits and prohibits an asset is not a grant. Such a contract is skipped
-// entirely, so if it is the only candidate the matcher fails closed rather than
-// silently honouring the permission.
+// An ODRL prohibition is not merely the absence of a permission: a contract that
+// both permits and prohibits an asset is not a grant for it. The prohibition
+// scan spans the whole contract rather than the permitting policy alone -
+// splitting a grant and a denial across two policies of one agreement must not
+// produce a grant. Such a contract is skipped entirely, so if it is the only
+// candidate the matcher fails closed rather than silently honouring the
+// permission.
 func findContractForTarget(contracts []contract.Contract, requestedURI string) (contract.Contract, bool) {
 	for _, c := range contracts {
-		for _, policy := range c.Policy {
-			if !targets(policy.Permission, requestedURI) {
-				continue
-			}
-			if targets(policy.Prohibition, requestedURI) {
-				continue
-			}
+		if prohibits(c, requestedURI) {
+			continue
+		}
+		if permits(c, requestedURI) {
 			return c, true
 		}
 	}
 	return contract.Contract{}, false
+}
+
+// permits reports whether any policy of the contract has a permission naming the
+// requested URI as its ODRL asset target.
+func permits(c contract.Contract, requestedURI string) bool {
+	for _, policy := range c.Policy {
+		if targets(policy.Permission, requestedURI) {
+			return true
+		}
+	}
+	return false
+}
+
+// prohibits reports whether ANY policy of the contract prohibits the requested
+// URI - see findContractForTarget for why the scope is the contract.
+func prohibits(c contract.Contract, requestedURI string) bool {
+	for _, policy := range c.Policy {
+		if targets(policy.Prohibition, requestedURI) {
+			return true
+		}
+	}
+	return false
 }
 
 // targets reports whether any of the ODRL rules names the requested URI as its

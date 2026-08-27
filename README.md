@@ -188,8 +188,11 @@ resource** the claim is about, in the catalog's own vocabulary.
 1. `parties.consumer` (required) plus the provider SD identify the **signed**
    contracts at the facade — only `status: "signed"` counts.
 2. The requested object's URI (read from `uriPointer` within each item) is
-   matched against each contract policy's ODRL `assetTarget`. A policy that
-   **prohibits** that URI never governs it, even if it also permits it.
+   matched against each contract policy's ODRL `assetTarget`. A contract that
+   **prohibits** that URI in *any* of its policies never governs it, even if
+   another of its policies permits it — a grant and a denial split across two
+   policies of one agreement is not a grant. Another signed contract that
+   permits the URI can still govern it.
 3. The governing contract's service offering is dereferenced, and its first
    catalog resource with `containsPII: true` becomes the claim's
    `dataResource`. A contract that declares no PII resource yields an
