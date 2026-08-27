@@ -1,0 +1,39 @@
+{
+  "defaultConsentRequired": false,
+  "defaultScheme": "identifier",
+  "rules": [
+    {
+      "name": "ngsi-personal-entity",
+      "match": { "service": "mp-data-service" },
+      "consentRequired": true,
+      "matcher": {
+        "type": "json",
+        "items": "",
+        "itemsIsArray": false,
+        "owner": "/dataOwner",
+        "resourcePointer": "/id"
+      }
+    },
+    {
+      "name": "ngsi-personal-collection",
+      "match": { "service": "mp-data-service-list" },
+      "consentRequired": true,
+      "matcher": {
+        "type": "json",
+        "items": "",
+        "itemsIsArray": true,
+        "owner": "/dataOwner",
+        "resourcePointer": "/id"
+      }
+    },
+    {
+      "name": "opaque-files",
+      "match": { "service": "file-service" },
+      "consentRequired": true,
+      "matcher": {
+        "type": "path",
+        "pattern": "^/files/(?P<owner>[^/]+)/(?P<resource>.+)$"
+      }
+    }
+  ]
+}

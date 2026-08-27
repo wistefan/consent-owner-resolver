@@ -1,0 +1,119 @@
+/*
+ * Copyright 2026 Seamless Middleware Technologies S.L and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package resolver
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// getJSONPointer resolves an RFC6901 JSON Pointer against a decoded JSON value
+// (map[string]interface{} / []interface{} / scalars). An empty pointer returns
+// the whole document. It returns the located value and whether it was found.
+func getJSONPointer(doc interface{}, pointer string) (interface{}, bool) {
+	if pointer == "" {
+		return doc, true
+	}
+	if pointer[0] != '/' {
+		return nil, false
+	}
+	cur := doc
+	for _, tok := range strings.Split(pointer[1:], "/") {
+		tok = strings.ReplaceAll(tok, "~1", "/")
+		tok = strings.ReplaceAll(tok, "~0", "~")
+		switch node := cur.(type) {
+		case map[string]interface{}:
+			v, ok := node[tok]
+			if !ok {
+				return nil, false
+			}
+			cur = v
+		case []interface{}:
+			idx, err := strconv.Atoi(tok)
+			if err != nil || idx < 0 || idx >= len(node) {
+				return nil, false
+			}
+			cur = node[idx]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// joinPointer appends one (unescaped) reference token to a base pointer,
+// escaping per RFC6901 (~ -> ~0, / -> ~1).
+func joinPointer(base, token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	token = strings.ReplaceAll(token, "/", "~1")
+	return base + "/" + token
+}
+
+// pointerString reads a string value at an RFC6901 pointer within item; it
+// returns ("", false) when absent or not a string.
+func pointerString(item interface{}, pointer string) (string, bool) {
+	v, ok := getJSONPointer(item, pointer)
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
+}
+
+// decodeJSONBody turns an optional request Body into a decoded JSON value, or
+// nil when there is no usable JSON payload (EncodingNone, or opaque base64 that
+// is not JSON). A JSON body that fails to parse is a client error.
+func decodeJSONBody(b *Body) (interface{}, error) {
+	if b == nil {
+		return nil, nil
+	}
+	switch b.Encoding {
+	case "", EncodingNone:
+		return nil, nil
+	case EncodingJSON:
+		if len(b.Content) == 0 {
+			return nil, nil
+		}
+		var v interface{}
+		if err := json.Unmarshal(b.Content, &v); err != nil {
+			return nil, fmt.Errorf("decode json body: %w", err)
+		}
+		return v, nil
+	case EncodingBase64:
+		var s string
+		if err := json.Unmarshal(b.Content, &s); err != nil {
+			return nil, fmt.Errorf("base64 body must be a JSON string: %w", err)
+		}
+		raw, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("decode base64 body: %w", err)
+		}
+		var v interface{}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			// Opaque (non-JSON) bytes: no structured view. Path/static matchers
+			// still work from Resource; json matchers will report they need JSON.
+			return nil, nil
+		}
+		return v, nil
+	default:
+		return nil, fmt.Errorf("unknown body encoding %q", b.Encoding)
+	}
+}
