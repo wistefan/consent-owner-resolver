@@ -62,6 +62,38 @@ func TestDataResources_FetchesLocallyButKeepsCanonicalIDs(t *testing.T) {
 	}
 }
 
+func TestSignedContracts_OnlySignedContractsGovern(t *testing.T) {
+	// A terminated or pending agreement must never gate personal data as though
+	// it were in force; a contract with no status at all fails closed too.
+	cases := map[string]struct {
+		status    string
+		wantCount int
+	}{
+		"signed":            {status: `"status":"signed",`, wantCount: 1},
+		"signed uppercase":  {status: `"status":"SIGNED",`, wantCount: 1},
+		"terminated":        {status: `"status":"terminated",`, wantCount: 0},
+		"revoked":           {status: `"status":"revoked",`, wantCount: 0},
+		"pending":           {status: `"status":"pending",`, wantCount: 0},
+		"status is missing": {status: ``, wantCount: 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"verified":true,"contracts":[{"_id":"default~agreement:1",` + tc.status + `"dataProvider":"p"}]}`))
+			}))
+			defer srv.Close()
+
+			contracts, err := NewClient(srv.URL, 0).SignedContracts(context.Background(), "http://facade/participants/p", "did:web:consumer")
+			if err != nil {
+				t.Fatalf("SignedContracts: %v", err)
+			}
+			if len(contracts) != tc.wantCount {
+				t.Fatalf("status %q: want %d contracts, got %d", tc.status, tc.wantCount, len(contracts))
+			}
+		})
+	}
+}
+
 func TestSignedContracts_UnverifiedYieldsNone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"verified":false,"contracts":[]}`))

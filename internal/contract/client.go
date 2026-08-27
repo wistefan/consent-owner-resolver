@@ -45,33 +45,58 @@ import (
 // DefaultTimeoutMs is the default per-call timeout against the facade.
 const DefaultTimeoutMs = 3000
 
+// StatusSigned is the only contract status this resolver treats as governing.
+// A contract in any other state - terminated, revoked, pending, or with no
+// status at all - is ignored. Honouring a terminated agreement in the component
+// that gates personal data is the wrong direction to fail, so an unrecognised
+// status fails CLOSED.
+const StatusSigned = "signed"
+
 // Rule is one ODRL permission/prohibition of a contract policy.
 type Rule struct {
 	// Target is the normalized target (the service-offering URL) the
-	// consent-manager expects.
+	// consent-manager expects. The resolver matches on AssetTarget instead,
+	// because it needs the concrete data object rather than the offering; Target
+	// is carried so the value is available to callers that speak the
+	// consent-manager's vocabulary.
 	Target string `json:"target"`
 	// AssetTarget is the target the source agreement carried - the asset URI that
 	// identifies the concrete data object. Requires a consent-facade that
 	// preserves it.
 	AssetTarget string `json:"assetTarget"`
-	Action      string `json:"action"`
+	// Action is the ODRL action (e.g. "use"). NOT evaluated in v1: the plugin
+	// gates read access to personal data, and the resolver's answer is
+	// action-independent. Refining a claim per action needs the plugin to send
+	// the intended action, which is phase B.
+	Action string `json:"action"`
 }
 
 // Policy is an ODRL policy of a contract.
 type Policy struct {
-	UID         string `json:"uid"`
-	Permission  []Rule `json:"permission"`
+	UID        string `json:"uid"`
+	Permission []Rule `json:"permission"`
+	// Prohibition rules disqualify a contract from governing their target: a
+	// policy that both permits and prohibits an asset is not a grant. See
+	// resolver.findContractForTarget.
 	Prohibition []Rule `json:"prohibition"`
 }
 
 // Contract is the (subset of the) projected bilateral contract.
 type Contract struct {
-	ID              string   `json:"_id"`
+	ID string `json:"_id"`
+	// Status is the contract state; only StatusSigned governs (see IsSigned).
 	Status          string   `json:"status"`
 	DataProvider    string   `json:"dataProvider"`
 	DataConsumer    string   `json:"dataConsumer"`
 	ServiceOffering string   `json:"serviceOffering"`
 	Policy          []Policy `json:"policy"`
+}
+
+// IsSigned reports whether the contract is in the one state that governs an
+// exchange. The comparison is case-insensitive; anything else - including an
+// absent status - is not signed.
+func (c Contract) IsSigned() bool {
+	return strings.EqualFold(c.Status, StatusSigned)
 }
 
 type verifyResponse struct {
@@ -115,9 +140,10 @@ func encodeParticipant(selfDescriptionURL string) string {
 	return base64.StdEncoding.EncodeToString([]byte(selfDescriptionURL))
 }
 
-// SignedContracts returns the signed contracts between a provider and a consumer,
-// both given as participant self-description URLs. An unverified pair yields no
-// contracts (and no error).
+// SignedContracts returns the SIGNED contracts between a provider and a
+// consumer, both given as participant self-description URLs. An unverified pair
+// yields no contracts (and no error), and so does a pair whose contracts are all
+// in some other state (terminated, revoked, pending, ...) - see IsSigned.
 func (c *Client) SignedContracts(ctx context.Context, providerSD, consumerSD string) ([]Contract, error) {
 	endpoint := fmt.Sprintf("%s/verify/%s/%s", c.baseURL,
 		url.PathEscape(encodeParticipant(providerSD)), url.PathEscape(encodeParticipant(consumerSD)))
@@ -128,7 +154,13 @@ func (c *Client) SignedContracts(ctx context.Context, providerSD, consumerSD str
 	if !out.Verified {
 		return nil, nil
 	}
-	return out.Contracts, nil
+	signed := make([]Contract, 0, len(out.Contracts))
+	for _, contract := range out.Contracts {
+		if contract.IsSigned() {
+			signed = append(signed, contract)
+		}
+	}
+	return signed, nil
 }
 
 // localize rewrites an absolute facade URL so it is fetched from THIS client's

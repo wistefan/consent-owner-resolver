@@ -42,7 +42,9 @@ type contractLookup interface {
 //     signed contract;
 //   - the requested object's URI is matched against each rule's ODRL asset target
 //     (`assetTarget`, preserved by the consent-facade); the matching contract's
-//     PII data resource becomes the claim's DataResource;
+//     PII data resource becomes the claim's DataResource. Only SIGNED contracts
+//     are considered (see contract.IsSigned), and a policy that prohibits the
+//     requested URI never governs it;
 //   - `containsPII` on that catalog resource decides whether consent is required
 //     at all, so no static flag is needed.
 //
@@ -222,18 +224,37 @@ func (m *contractMatcher) claimForItem(ctx context.Context, resources *perReques
 }
 
 // findContractForTarget returns the first contract having a permission whose ODRL
-// asset target equals the requested URI.
+// asset target equals the requested URI and NO prohibition on that same URI.
+//
+// An ODRL prohibition is not merely the absence of a permission: a policy that
+// both permits and prohibits an asset is not a grant. Such a contract is skipped
+// entirely, so if it is the only candidate the matcher fails closed rather than
+// silently honouring the permission.
 func findContractForTarget(contracts []contract.Contract, requestedURI string) (contract.Contract, bool) {
 	for _, c := range contracts {
 		for _, policy := range c.Policy {
-			for _, rule := range policy.Permission {
-				if rule.AssetTarget == requestedURI {
-					return c, true
-				}
+			if !targets(policy.Permission, requestedURI) {
+				continue
 			}
+			if targets(policy.Prohibition, requestedURI) {
+				continue
+			}
+			return c, true
 		}
 	}
 	return contract.Contract{}, false
+}
+
+// targets reports whether any of the ODRL rules names the requested URI as its
+// asset target. Matching is plain-URI equality; richer targets (an ODRL
+// AssetCollection with refinements) need the contract model to carry them.
+func targets(rules []contract.Rule, requestedURI string) bool {
+	for _, rule := range rules {
+		if rule.AssetTarget == requestedURI {
+			return true
+		}
+	}
+	return false
 }
 
 // firstPIIResource returns the first data resource flagged as carrying personal

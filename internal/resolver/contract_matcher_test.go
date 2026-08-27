@@ -228,6 +228,34 @@ func TestContractMatcher_ResourcesFetchedOncePerContract(t *testing.T) {
 	}
 }
 
+func TestContractMatcher_ProhibitedTargetDoesNotGovern(t *testing.T) {
+	// A policy that both permits and prohibits the asset is not a grant: with no
+	// other candidate the matcher must fail closed.
+	prohibiting := contractWithTarget(testAssetURI)
+	prohibiting.Policy[0].Prohibition = []contract.Rule{{AssetTarget: testAssetURI, Action: "use"}}
+	stub := &stubLookup{contracts: []contract.Contract{prohibiting}, resources: piiResources()}
+	m := newContractResolver(t, stub, false)
+
+	if _, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner")); err == nil {
+		t.Fatal("a prohibited asset must not be governed by that contract")
+	}
+}
+
+func TestContractMatcher_ProhibitionOnAnotherAssetIsIrrelevant(t *testing.T) {
+	governing := contractWithTarget(testAssetURI)
+	governing.Policy[0].Prohibition = []contract.Rule{{AssetTarget: "urn:ngsi-ld:PersonalProfile:bob", Action: "use"}}
+	stub := &stubLookup{contracts: []contract.Contract{governing}, resources: piiResources()}
+	m := newContractResolver(t, stub, false)
+
+	claims, err := m.Claims(context.Background(), requestWithConsumer(testConsumerSD), entity(testAssetURI, "did:key:zOwner"))
+	if err != nil {
+		t.Fatalf("Claims: %v", err)
+	}
+	if len(claims) != 1 || claims[0].DataResource != testResourceID {
+		t.Fatalf("unexpected claims: %+v", claims)
+	}
+}
+
 func TestContractMatcher_NoPIIResourceStaysOwnerLevel(t *testing.T) {
 	stub := &stubLookup{
 		contracts: []contract.Contract{contractWithTarget(testAssetURI)},
