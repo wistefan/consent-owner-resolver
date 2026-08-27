@@ -128,7 +128,9 @@ type ResolveResult struct {
 	// "email" or "did".
 	Scheme string `json:"scheme,omitempty"`
 	// Claims answers (b): one entry per data item / subject. Empty when
-	// ConsentRequired is false.
+	// ConsentRequired is false. Always serialized as a list, never as null -
+	// the consumer is a Lua plugin whose cjson decodes null to a lightuserdata
+	// that cannot be iterated.
 	Claims []Claim `json:"claims"`
 }
 

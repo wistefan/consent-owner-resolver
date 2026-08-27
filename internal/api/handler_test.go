@@ -143,6 +143,39 @@ func TestHandler_StatusCodesMatchTheDocumentedContract(t *testing.T) {
 	}
 }
 
+func TestHandler_ClaimsIsAlwaysAList(t *testing.T) {
+	// `"claims": null` would reach the Lua plugin as cjson.null, where
+	// ipairs()/# throw rather than iterating zero times.
+	cases := map[string]string{
+		"no rule matched":  `{"resource":{"service":"unknown","path":"/x"}}`,
+		"empty collection": `{"resource":{"service":"list","path":"/x"},"body":{"encoding":"json","content":[]}}`,
+	}
+	r, err := resolver.Parse([]byte(`{
+	  "defaultConsentRequired": true,
+	  "rules": [{
+	    "match": {"service": "list"},
+	    "consentRequired": true,
+	    "matcher": {"type": "json", "itemsIsArray": true, "owner": "/owner"}
+	  }]
+	}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := NewHandler(r, Options{})
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"claims":[]`) {
+				t.Fatalf("claims must serialize as [], got %s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandler_MethodNotAllowed(t *testing.T) {
 	h := newTestHandler(t)
 	rec := httptest.NewRecorder()

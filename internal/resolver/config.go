@@ -256,11 +256,25 @@ func (r *ConfigResolver) Resolve(ctx context.Context, req ResolveRequest) (Resol
 		return ResolveResult{
 			ConsentRequired: rule.consentRequired,
 			Scheme:          rule.scheme,
-			Claims:          claims,
+			Claims:          noClaimsIsEmptyList(claims),
 		}, nil
 	}
 	return ResolveResult{
 		ConsentRequired: r.defaultConsentRequired,
 		Scheme:          r.defaultScheme,
+		Claims:          noClaimsIsEmptyList(nil),
 	}, nil
+}
+
+// noClaimsIsEmptyList turns a nil claim slice into an empty one so the response
+// carries `"claims": []` and never `"claims": null`.
+//
+// The consumer is a Lua/OpenResty plugin: cjson decodes null to cjson.null (a
+// lightuserdata), so `#resp.claims` and `ipairs(resp.claims)` throw instead of
+// iterating zero times.
+func noClaimsIsEmptyList(claims []Claim) []Claim {
+	if claims == nil {
+		return []Claim{}
+	}
+	return claims
 }
