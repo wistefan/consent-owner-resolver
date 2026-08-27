@@ -226,7 +226,7 @@ make build && CONFIG_PATH=config/example.json ./owner-resolver   # :8080
 make test                                                        # unit tests
 make lint                                                        # golangci-lint, .golangci.yml
 make security                                                    # govulncheck + gosec (blocking in CI)
-make docker-build                                                # quay.io/wi_stefan/consent-owner-resolver:0.0.1
+make docker-build                                                # quay.io/seamware/consent-owner-resolver:0.0.1
 ```
 
 Requires Go 1.26.7+ (the version `go.mod` pins). The runtime image is

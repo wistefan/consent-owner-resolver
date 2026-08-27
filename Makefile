@@ -2,7 +2,7 @@
 
 BINARY_NAME := owner-resolver
 
-DOCKER_IMAGE := quay.io/wi_stefan/consent-owner-resolver
+DOCKER_IMAGE := quay.io/seamware/consent-owner-resolver
 DOCKER_TAG := 0.0.1
 
 GO_BUILD_FLAGS := -trimpath -ldflags="-s -w"
