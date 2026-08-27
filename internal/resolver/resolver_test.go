@@ -345,6 +345,33 @@ func TestResolve_Errors(t *testing.T) {
 	})
 }
 
+func TestParse_CatchAllRulePlacement(t *testing.T) {
+	catchAll := `{"name": "catch-all", "match": {}, "consentRequired": true, "matcher": {"type": "static", "owner": "x"}}`
+	specific := `{"name": "files", "match": {"service": "file-service"}, "consentRequired": true, "matcher": {"type": "static", "owner": "y"}}`
+	cases := map[string]struct {
+		rules   string
+		wantErr bool
+	}{
+		// First-match: everything after a catch-all is dead config, and an
+		// operator who believes such a rule is active is the worst kind of
+		// quiet in a component that gates personal data.
+		"catch-all first shadows the rest": {rules: catchAll + "," + specific, wantErr: true},
+		"catch-all last is a fallback":     {rules: specific + "," + catchAll},
+		"a lone catch-all is fine":         {rules: catchAll},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(`{"rules": [` + tc.rules + `]}`))
+			if tc.wantErr && err == nil {
+				t.Fatal("expected Parse to reject the unreachable rule")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+		})
+	}
+}
+
 func TestParse_AcceptsEverySupportedScheme(t *testing.T) {
 	for _, scheme := range []string{SchemeIdentifier, SchemeEmail, SchemeDID} {
 		t.Run(scheme, func(t *testing.T) {

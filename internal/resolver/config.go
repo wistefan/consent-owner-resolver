@@ -120,6 +120,13 @@ type compiledRule struct {
 	matcher         Matcher
 }
 
+// isCatchAll reports whether the rule matches every request. Rules are
+// first-match, so a catch-all is legitimate as the LAST rule (an explicit
+// fallback) and makes every rule after it dead.
+func (r compiledRule) isCatchAll() bool {
+	return r.service == "" && r.pathRe == nil
+}
+
 func (r compiledRule) matches(req ResolveRequest) bool {
 	if r.service != "" && r.service != req.Resource.Service {
 		return false
@@ -221,7 +228,27 @@ func Parse(data []byte) (*ConfigResolver, error) {
 			matcher:         matcher,
 		})
 	}
+	if err := rejectDeadRules(cr.rules); err != nil {
+		return nil, err
+	}
 	return cr, nil
+}
+
+// rejectDeadRules fails a config in which a rule can never be reached.
+//
+// Rules are first-match and an empty `match` matches everything, so a catch-all
+// anywhere but last silently disables every rule below it - and for a component
+// that gates personal data, a rule the operator believes is active but is not is
+// the worst kind of quiet. As the last rule a catch-all is a deliberate
+// fallback and stays allowed.
+func rejectDeadRules(rules []compiledRule) error {
+	for i, rule := range rules {
+		if rule.isCatchAll() && i < len(rules)-1 {
+			return fmt.Errorf("rule %s has an empty match, so it matches every request and rule %s (and any after it) can never be reached; move it last or give it a match",
+				rule.name, rules[i+1].name)
+		}
+	}
+	return nil
 }
 
 // validateScheme rejects a scheme outside validSchemes, naming where it came

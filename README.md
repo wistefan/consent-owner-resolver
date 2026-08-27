@@ -92,7 +92,10 @@ Response:
 ## Configuration
 
 JSON, mounted at `CONFIG_PATH` (default `/etc/owner-resolver/config.json`).
-Rules are evaluated top-down; the first whose `match` matches wins.
+Rules are evaluated top-down; the first whose `match` matches wins. A rule with
+an empty `match` matches everything, so it is only allowed as the **last** rule
+— anywhere else it would make every rule below it unreachable, and `Parse`
+rejects that.
 
 ```jsonc
 {
