@@ -45,8 +45,11 @@ type contractLookup interface {
 //     PII data resource becomes the claim's DataResource. Only SIGNED contracts
 //     are considered (see contract.IsSigned), and a policy that prohibits the
 //     requested URI never governs it;
-//   - `containsPII` on that catalog resource decides whether consent is required
-//     at all, so no static flag is needed.
+//   - `containsPII` selects WHICH catalog resource the claim names. It does NOT
+//     decide whether consent is required: that stays the rule's own
+//     `consentRequired` flag, so the answer to "is this gated?" never depends on
+//     a catalog document the resolver just fetched. A contract that declares no
+//     PII resource yields an owner-level claim rather than an ungated one.
 //
 // Matching is plain-URI equality. Richer targets (an ODRL AssetCollection with
 // refinements) need the contract model to carry them; see owner-plan.md phase B.

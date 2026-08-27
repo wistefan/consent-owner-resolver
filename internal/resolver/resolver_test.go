@@ -337,6 +337,9 @@ func TestParse_ConfigErrors(t *testing.T) {
 		"contractService without url":              `{"contractService": {}, "rules": []}`,
 		"contract matcher without contractService": `{"rules": [{"match": {}, "matcher": {"type": "contract", "owner": "/o"}}]}`,
 		"contract matcher without owner":           `{"contractService": {"url": "http://facade:8080"}, "rules": [{"match": {}, "matcher": {"type": "contract"}}]}`,
+		// consentRequired:false on a contract rule would fetch the governing
+		// contract and then throw the claims away unchecked.
+		"contract matcher with consentRequired false": `{"contractService": {"url": "http://facade:8080"}, "rules": [{"match": {}, "consentRequired": false, "matcher": {"type": "contract", "owner": "/o"}}]}`,
 	}
 	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {

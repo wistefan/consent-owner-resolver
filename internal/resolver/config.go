@@ -183,6 +183,13 @@ func Parse(data []byte) (*ConfigResolver, error) {
 			}
 			pathRe = re
 		}
+		// A contract rule answering "no consent needed" is a contradiction: the
+		// matcher would query the facade for the governing contract and the
+		// plugin would then discard the claims unchecked. Reject it rather than
+		// letting a typo silently ungate personal data.
+		if rr.Matcher.Type == matcherContract && !rr.ConsentRequired {
+			return nil, fmt.Errorf("rule %s: a %q matcher requires consentRequired:true (containsPII selects which resource a claim names, it does not decide whether consent is checked)", label, matcherContract)
+		}
 		matcher, err := buildMatcher(rr.Matcher, contractClient, providerSD)
 		if err != nil {
 			return nil, fmt.Errorf("rule %s: %w", label, err)
