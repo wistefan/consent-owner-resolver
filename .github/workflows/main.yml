@@ -41,9 +41,13 @@ jobs:
     uses: ./.github/workflows/security-analysis.yml
 
   release:
+    # Every check gates the release, `build` included: the release compiles the
+    # binary again anyway, and omitting it from `needs` only meant a broken
+    # build could still start a release before failing.
     needs:
       - license-headers
       - style-guide
+      - build
       - tests
       - security-analysis
     uses: ./.github/workflows/release.yml
