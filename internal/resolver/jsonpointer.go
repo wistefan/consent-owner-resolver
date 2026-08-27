@@ -155,9 +155,11 @@ func decodeJSONBody(b *Body) (interface{}, error) {
 		}
 		var v interface{}
 		if err := json.Unmarshal(raw, &v); err != nil {
-			// Opaque (non-JSON) bytes: no structured view. Path/static matchers
-			// still work from Resource; json matchers will report they need JSON.
-			return nil, nil
+			// Opaque (non-JSON) bytes: no structured view, and NOT a client
+			// error - base64 is the encoding for payloads that need not be JSON
+			// at all. Path/static matchers still work from Resource; json
+			// matchers report that they need JSON.
+			return nil, nil //nolint:nilerr // deliberate: opaque bytes are a valid payload
 		}
 		return v, nil
 	default:

@@ -186,6 +186,7 @@ integration contract.
 ```sh
 make build && CONFIG_PATH=config/example.json ./owner-resolver   # :8080
 make test                                                        # unit tests
+make lint                                                        # golangci-lint, .golangci.yml
 make security                                                    # govulncheck + gosec (blocking in CI)
 make docker-build                                                # quay.io/wi_stefan/consent-owner-resolver:0.0.1
 ```

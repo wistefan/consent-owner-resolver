@@ -8,6 +8,7 @@ DOCKER_TAG := 0.0.1
 GO_BUILD_FLAGS := -trimpath -ldflags="-s -w"
 COVERAGE_FILE := coverage.out
 
+GOLANGCI_LINT_VERSION := v2.13.1
 GOSEC_VERSION := v2.29.0
 GOVULNCHECK_VERSION := v1.7.0
 
@@ -26,9 +27,9 @@ test-cover:
 	go test -race -coverprofile=$(COVERAGE_FILE) ./...
 	go tool cover -func=$(COVERAGE_FILE)
 
-## lint: Run golangci-lint
+## lint: Run golangci-lint with the repository's .golangci.yml (CI runs the same)
 lint:
-	golangci-lint run ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 ## security: Run the same blocking security scans CI runs
 security:

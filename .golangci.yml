@@ -1,0 +1,58 @@
+# Style guide for consent-owner-resolver.
+#
+# This file is what makes `style-guide.yml` a style GUIDE rather than a default
+# lint run: the standard set plus the checks this codebase actually cares about.
+# `make lint` and CI both read it, so local and CI verdicts cannot diverge.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # Every exported type and method must be documented (a project rule), and
+    # revive is what enforces it.
+    - revive
+    # The service handles personal data: an unchecked error or an unclosed body
+    # is a correctness bug, not a style nit.
+    - bodyclose
+    - errorlint
+    - nilerr
+    # Magic constants are banned in this project.
+    - goconst
+    # Context must reach the facade calls.
+    - contextcheck
+    - noctx
+    # Keep the stdlib-only surface honest.
+    - gosec
+    - misspell
+    - unconvert
+    - wastedassign
+    - copyloopvar
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+    goconst:
+      min-len: 3
+      min-occurrences: 4
+      ignore-tests: true
+
+  exclusions:
+    rules:
+      # Table-driven tests repeat short literals by design, and a test binary is
+      # not a security boundary.
+      - path: _test\.go
+        linters:
+          - goconst
+          - gosec
+          - noctx
+
+formatters:
+  enable:
+    - gofmt

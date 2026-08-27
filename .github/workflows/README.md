@@ -19,7 +19,7 @@ so a check is defined once and runs identically on a PR and on `main`.
 | Workflow | Does |
 |---|---|
 | `license-headers.yml` | `hack/license-header.sh check` - the Apache-2.0 header on every Go file |
-| `style-guide.yml` | `golangci-lint` using the repo's `.golangci.yml` |
+| `style-guide.yml` | `golangci-lint` (pinned) using the repo's `.golangci.yml` - same config as `make lint` |
 | `build.yml` | `go build` |
 | `tests.yml` | `go test -race` + coverage summary/artifact (Coveralls upload is non-blocking) |
 | `security-analysis.yml` | `govulncheck` + `gosec` (both **blocking**), SARIF uploaded to code scanning |
