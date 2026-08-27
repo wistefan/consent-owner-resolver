@@ -62,6 +62,62 @@ func TestDataResources_FetchesLocallyButKeepsCanonicalIDs(t *testing.T) {
 	}
 }
 
+func TestLocalize_RebuildsOrFails(t *testing.T) {
+	// The input comes from the facade's response, i.e. from outside this
+	// process: a URL that cannot be rewritten must be refused, never fetched
+	// as-is.
+	c := NewClient("http://consent-facade.provider.svc.cluster.local:8080", 0)
+	cases := map[string]struct {
+		in      string
+		want    string
+		wantErr bool
+	}{
+		"canonical id is rewritten to the local base": {
+			in:   canonicalBase + "/catalog/dataresources/default~spec:1",
+			want: "http://consent-facade.provider.svc.cluster.local:8080/catalog/dataresources/default~spec:1",
+		},
+		"query is preserved": {
+			in:   canonicalBase + "/catalog/dataresources?id=1",
+			want: "http://consent-facade.provider.svc.cluster.local:8080/catalog/dataresources?id=1",
+		},
+		"host with no path is refused": {in: "http://some-internal-host", wantErr: true},
+		"host with a bare slash":       {in: "http://some-internal-host/", wantErr: true},
+		"unparseable url is refused":   {in: "http://[::1", wantErr: true},
+		"empty string is refused":      {in: "", wantErr: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := c.localize(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want an error for %q, got %q", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("localize(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Fatalf("localize(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDataResources_RefusesAnUnlocalizableReference(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"dataResources":["http://attacker-controlled-host"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, 0).DataResources(context.Background(), Contract{
+		ServiceOffering: canonicalBase + "/catalog/serviceofferings/default~agreement:1",
+	})
+	if err == nil {
+		t.Fatal("a data resource reference with no path must not be fetched as-is")
+	}
+}
+
 func TestSignedContracts_OnlySignedContractsGovern(t *testing.T) {
 	// A terminated or pending agreement must never gate personal data as though
 	// it were in force; a contract with no status at all fails closed too.

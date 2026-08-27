@@ -168,16 +168,24 @@ func (c *Client) SignedContracts(ctx context.Context, providerSD, consumerSD str
 // canonical (authority) facade base - that is the vocabulary consents are
 // expressed in - while a provider-local facade instance serves the same paths.
 // Rewriting the host lets the resolver read locally without changing any id.
-func (c *Client) localize(rawURL string) string {
+//
+// It always rebuilds, or fails. Returning the input unchanged for a URL it could
+// not rewrite would mean fetching whatever host that URL named - and the input
+// comes from the facade's response, i.e. from outside this process. A URL with
+// no path (`http://some-internal-host`) is exactly such a case.
+func (c *Client) localize(rawURL string) (string, error) {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Path == "" {
-		return rawURL
+	if err != nil {
+		return "", fmt.Errorf("contract client: %q is not a usable url: %w", rawURL, err)
+	}
+	if parsed.Path == "" || parsed.Path == "/" {
+		return "", fmt.Errorf("contract client: %q has no path to localize", rawURL)
 	}
 	localized := c.baseURL + parsed.Path
 	if parsed.RawQuery != "" {
 		localized += "?" + parsed.RawQuery
 	}
-	return localized
+	return localized, nil
 }
 
 // DataResources dereferences a contract's service offering and returns the
@@ -187,14 +195,22 @@ func (c *Client) DataResources(ctx context.Context, contract Contract) ([]DataRe
 	if contract.ServiceOffering == "" {
 		return nil, nil
 	}
+	offeringURL, err := c.localize(contract.ServiceOffering)
+	if err != nil {
+		return nil, err
+	}
 	var offering serviceOffering
-	if err := c.getJSON(ctx, c.localize(contract.ServiceOffering), &offering); err != nil {
+	if err := c.getJSON(ctx, offeringURL, &offering); err != nil {
 		return nil, err
 	}
 	resources := make([]DataResource, 0, len(offering.DataResources))
 	for _, ref := range offering.DataResources {
+		resourceURL, err := c.localize(ref)
+		if err != nil {
+			return nil, err
+		}
 		var dr DataResource
-		if err := c.getJSON(ctx, c.localize(ref), &dr); err != nil {
+		if err := c.getJSON(ctx, resourceURL, &dr); err != nil {
 			return nil, err
 		}
 		// Keep the canonical id: `ref` (and the document's own @id) are minted with
