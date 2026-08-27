@@ -18,9 +18,11 @@
 package contract
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -147,6 +149,49 @@ func TestSignedContracts_OnlySignedContractsGovern(t *testing.T) {
 				t.Fatalf("status %q: want %d contracts, got %d", tc.status, tc.wantCount, len(contracts))
 			}
 		})
+	}
+}
+
+func TestGetJSON_RejectsAnOversizedResponse(t *testing.T) {
+	// Without a cap the resolver would buffer whatever the facade sends, on the
+	// synchronous path of every proxied request.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"verified":true,"contracts":[{"_id":"`))
+		chunk := bytes.Repeat([]byte("a"), 1<<20)
+		for written := 0; written <= maxResponseBytes; written += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, 0).SignedContracts(context.Background(), "http://facade/participants/p", "did:web:consumer")
+	if err == nil {
+		t.Fatal("an oversized facade response must be rejected")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("want a size-limit error, got %v", err)
+	}
+}
+
+func TestGetJSON_DoesNotReadTheBodyOfAnErrorResponse(t *testing.T) {
+	// A 500 with a large body must not be read in full just to be discarded.
+	var served int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		n, _ := w.Write(bytes.Repeat([]byte("x"), 8<<20))
+		served += n
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL, 0).SignedContracts(context.Background(), "http://facade/participants/p", "did:web:consumer")
+	if err == nil {
+		t.Fatal("a non-200 facade response must be an error")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Fatalf("want a status error, got %v", err)
 	}
 }
 

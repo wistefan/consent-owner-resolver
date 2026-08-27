@@ -45,6 +45,17 @@ import (
 // DefaultTimeoutMs is the default per-call timeout against the facade.
 const DefaultTimeoutMs = 3000
 
+// maxResponseBytes caps a single facade response. The inbound side is protected
+// by http.MaxBytesReader; this is the same protection for the side the resolver
+// calls, so a facade that misbehaves (or is impersonated) cannot exhaust the
+// resolver's memory on the request hot path. 4 MiB is orders of magnitude above
+// any real contract or catalog document.
+const maxResponseBytes = 4 << 20
+
+// drainBytes is how much of a discarded response body is read before closing, so
+// the underlying connection can be reused.
+const drainBytes = 4 << 10
+
 // StatusSigned is the only contract status this resolver treats as governing.
 // A contract in any other state - terminated, revoked, pending, or with no
 // status at all - is ignored. Honouring a terminated agreement in the component
@@ -234,12 +245,21 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, target interface{
 		return fmt.Errorf("contract client: request %q failed: %w", endpoint, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
+	// Status first: the body of an error response is of no interest, and reading
+	// a large one in full before discarding it is pure waste. A bounded drain
+	// still lets the connection be reused.
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainBytes))
+		return fmt.Errorf("contract client: %q returned status %d", endpoint, resp.StatusCode)
+	}
+	// Read one byte past the cap so an oversized response is reported as such,
+	// rather than silently truncated into a confusing JSON syntax error.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("contract client: read response from %q: %w", endpoint, err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("contract client: %q returned status %d", endpoint, resp.StatusCode)
+	if len(body) > maxResponseBytes {
+		return fmt.Errorf("contract client: response from %q exceeds the %d byte limit", endpoint, maxResponseBytes)
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return fmt.Errorf("contract client: decode response from %q: %w", endpoint, err)
