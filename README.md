@@ -244,6 +244,14 @@ This repo is only the resolver. The plugin-side integration (calling `/resolve`,
 then checking consent per resolved owner) and the consent-manager changes are
 tracked separately.
 
+## Contributing
+
+Every PR needs exactly one semver label (`patch` / `minor` / `major`) — the
+merge to `main` reads it to compute the release. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for that and the code rules, and
+[SECURITY.md](SECURITY.md) for reporting a vulnerability (privately, not as an
+issue).
+
 ## Copyright headers
 
 Every Go source file carries the Apache-2.0 copyright header. The canonical text lives in
