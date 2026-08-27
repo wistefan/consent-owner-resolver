@@ -83,6 +83,9 @@ Response:
   consent may be required but the owner cannot be determined → `422` (the plugin
   then applies its fail policy — deny by default). A resolver response never
   silently means "no consent needed".
+- Error bodies are deliberately generic (`{"error":"cannot resolve owner"}`):
+  the detail names this deployment's pointer configuration, so it goes to the
+  log instead. Run with `LOG_LEVEL=debug` to get it.
 
 ### `GET /health` → `200 {"status":"ok"}`
 
@@ -196,7 +199,9 @@ Requires Go 1.26.7+ (the version `go.mod` pins). The runtime image is
 nothing to patch beyond the binary itself.
 
 Env: `CONFIG_PATH`, `LISTEN_ADDR` (default `:8080`), `MAX_BODY_BYTES` (default 5 MiB),
-`AUTH_TOKEN` (see below).
+`AUTH_TOKEN` (see below), `LOG_LEVEL` (`debug` to log request paths and error
+detail verbatim — both carry owner identifiers, so it is off by default and
+meant to be temporary).
 
 ## Deployment: this service is cluster-internal
 

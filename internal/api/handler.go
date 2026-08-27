@@ -43,6 +43,10 @@ type Options struct {
 	// present as `Authorization: Bearer <token>`. Empty leaves /resolve open,
 	// which is only safe on a network where nothing but the plugin can reach it.
 	AuthToken string
+	// Debug logs the full request path and the full resolver error. Both can
+	// carry owner identifiers, so it is off by default and is an explicit,
+	// temporary operator choice - see redactPath and errorClass.
+	Debug bool
 }
 
 // Handler serves the resolver HTTP API.
@@ -56,6 +60,7 @@ type Handler struct {
 	resolver     resolver.Resolver
 	maxBodyBytes int64
 	authToken    string
+	debug        bool
 }
 
 // NewHandler builds an http.Handler routing /resolve and /health to the given
@@ -64,7 +69,7 @@ func NewHandler(r resolver.Resolver, opts Options) http.Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = defaultMaxBodyBytes
 	}
-	h := &Handler{resolver: r, maxBodyBytes: opts.MaxBodyBytes, authToken: opts.AuthToken}
+	h := &Handler{resolver: r, maxBodyBytes: opts.MaxBodyBytes, authToken: opts.AuthToken, debug: opts.Debug}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/resolve", h.resolve)
 	// /health carries no data and must stay reachable for liveness probes, so it
@@ -129,16 +134,32 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		// The plugin distinguishes the two 4xx cases, so they must not be
 		// conflated: a payload the resolver cannot decode is the caller's bug
 		// (400), an owner it cannot determine is not (422).
-		log.Printf("[owner-resolver] resolve failed for %s %s: %v", req.Resource.Method, req.Resource.Path, err)
+		h.logResolveFailure(req, err)
+		// The response says WHAT failed, never WHY in detail: an error like
+		// `json matcher: no owner at "/dataOwner"` hands the caller this
+		// deployment's pointer configuration. The detail is in the log.
 		var badRequest *resolver.BadRequestError
 		if errors.As(err, &badRequest) {
-			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			writeError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		writeError(w, http.StatusUnprocessableEntity, "cannot resolve owner: "+err.Error())
+		writeError(w, http.StatusUnprocessableEntity, "cannot resolve owner")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// logResolveFailure records a failed resolve. At the default level neither the
+// path nor the error detail is logged verbatim - both carry owner identifiers in
+// the documented payload shapes.
+func (h *Handler) logResolveFailure(req resolver.ResolveRequest, err error) {
+	if h.debug {
+		log.Printf("[owner-resolver] resolve failed: service=%q method=%q path=%q: %v",
+			req.Resource.Service, req.Resource.Method, req.Resource.Path, err)
+		return
+	}
+	log.Printf("[owner-resolver] resolve failed: service=%q method=%q path=%s: %s",
+		req.Resource.Service, req.Resource.Method, redactPath(req.Resource.Path), errorClass(err))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

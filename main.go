@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,9 +41,14 @@ const (
 	envListenAddr   = "LISTEN_ADDR"
 	envMaxBodyBytes = "MAX_BODY_BYTES"
 	envAuthToken    = "AUTH_TOKEN"
+	envLogLevel     = "LOG_LEVEL"
 
 	defaultConfigPath = "/etc/owner-resolver/config.json"
 	defaultListenAddr = ":8080"
+
+	// logLevelDebug turns on verbatim path and error logging. Both can carry
+	// owner identifiers, so it is opt-in and meant to be temporary.
+	logLevelDebug = "debug"
 )
 
 func main() {
@@ -60,8 +66,12 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:              listenAddr,
-		Handler:           api.NewHandler(res, api.Options{MaxBodyBytes: maxBodyBytes, AuthToken: authToken}),
+		Addr: listenAddr,
+		Handler: api.NewHandler(res, api.Options{
+			MaxBodyBytes: maxBodyBytes,
+			AuthToken:    authToken,
+			Debug:        strings.EqualFold(os.Getenv(envLogLevel), logLevelDebug),
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
