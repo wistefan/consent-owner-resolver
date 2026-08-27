@@ -11,8 +11,17 @@ concurrency:
   group: main-${{ github.ref }}
   cancel-in-progress: false
 
+# A reusable workflow's token can never be wider than its caller's, and once a
+# `permissions:` block is present every unlisted scope is denied. So every scope
+# any called workflow needs must be granted here:
+#   contents: write      -> release.yml / git-release creates the tag and release
+#   pull-requests: read  -> release.yml / generate-version reads the merged PR's
+#                           semver label (without it the lookup returns nothing
+#                           and the whole release is skipped SILENTLY)
+#   security-events: write -> security-analysis.yml uploads SARIF
 permissions:
-  contents: read
+  contents: write
+  pull-requests: read
   security-events: write
 
 jobs:

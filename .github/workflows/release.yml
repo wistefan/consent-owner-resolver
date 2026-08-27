@@ -25,6 +25,12 @@ env:
 jobs:
   generate-version:
     runs-on: ubuntu-latest
+    # A job-level block REPLACES the inherited set, so every scope the job needs
+    # must be listed: contents to check out, pull-requests to read the merged
+    # PR's semver label.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       has_version: ${{ steps.version.outputs.has_version }}
@@ -77,6 +83,7 @@ jobs:
     needs: generate-version
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
     steps:
       - uses: actions/checkout@v4
@@ -138,6 +145,8 @@ jobs:
     needs: generate-version
     if: needs.generate-version.outputs.has_version == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
