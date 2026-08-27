@@ -18,6 +18,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,6 +124,57 @@ func TestHandler_MetricsEndpoint(t *testing.T) {
 	}
 	if strings.Contains(body, "dataOwner") {
 		t.Fatalf("metrics leaked the pointer configuration:\n%s", body)
+	}
+}
+
+func TestMetrics_FailureClassSetIsClosed(t *testing.T) {
+	// /metrics is served WITHOUT the shared secret on the stated grounds that
+	// its labels carry no request data. A caller must not be able to mint label
+	// values through an error message.
+	const attempts = 25
+	h := newTestHandler(t)
+	for i := 0; i < attempts; i++ {
+		body := fmt.Sprintf(`{"resource":{"service":"svc","path":"/e/1"},"body":{"encoding":"attacker-%d","content":"x"}}`, i)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("want 400 for an unknown encoding, got %d", rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+
+	if strings.Contains(body, "attacker-") {
+		t.Fatalf("caller-supplied text reached the metrics output:\n%s", body)
+	}
+	if got := strings.Count(body, metricFailures+"{"); got != 1 {
+		t.Fatalf("%d requests must produce ONE failure series, got %d:\n%s", attempts, got, body)
+	}
+	if want := fmt.Sprintf(`%s{class="decode body"} %d`, metricFailures, attempts); !strings.Contains(body, want) {
+		t.Fatalf("missing %q in:\n%s", want, body)
+	}
+}
+
+func TestMetrics_FailureClassesAreCapped(t *testing.T) {
+	// Structural backstop: even if a future error message reintroduces
+	// caller-influenced text, the map cannot grow without bound.
+	m := newMetrics()
+	const extra = 10
+	for i := 0; i < maxFailureClasses+extra; i++ {
+		m.observeFailure(fmt.Sprintf("class-%d", i))
+	}
+
+	var out strings.Builder
+	if err := m.writeTo(&out); err != nil {
+		t.Fatalf("writeTo: %v", err)
+	}
+	if got := strings.Count(out.String(), metricFailures+"{"); got != maxFailureClasses+1 {
+		t.Fatalf("want %d series (the cap plus the overflow bucket), got %d", maxFailureClasses+1, got)
+	}
+	if want := fmt.Sprintf(`%s{class=%q} %d`, metricFailures, failureClassOverflow, extra); !strings.Contains(out.String(), want) {
+		t.Fatalf("overflowed failures must still be counted; missing %q", want)
 	}
 }
 

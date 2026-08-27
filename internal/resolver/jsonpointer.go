@@ -163,6 +163,9 @@ func decodeJSONBody(b *Body) (interface{}, error) {
 		}
 		return v, nil
 	default:
-		return nil, badRequestf("unknown body encoding %q", b.Encoding)
+		// The class prefix matters: errorClass keys the failure metric on the
+		// text before the first ": ", and this is the one message that
+		// interpolates a caller-supplied value.
+		return nil, badRequestf("decode body: unknown encoding %q", b.Encoding)
 	}
 }

@@ -53,8 +53,12 @@ func TestErrorClass(t *testing.T) {
 	}{
 		"drops the pointer config": {err: errors.New(`json matcher: no owner at "/dataOwner"`), want: "json matcher"},
 		"drops the requested uri":  {err: errors.New(`contract matcher: no contract rule targets "urn:ngsi-ld:PersonalProfile:alice"`), want: "contract matcher"},
-		"message without a detail": {err: errors.New("boom"), want: "boom"},
-		"nil error":                {err: nil, want: ""},
+		// An unprefixed message must NOT become the class: the class is a label
+		// on the unauthenticated /metrics endpoint.
+		"message without a detail":    {err: errors.New("boom"), want: errorClassUnspecified},
+		"caller text without a colon": {err: errors.New(`unknown body encoding "attacker-0"`), want: errorClassUnspecified},
+		"leading separator":           {err: errors.New(": detail"), want: errorClassUnspecified},
+		"nil error":                   {err: nil, want: ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

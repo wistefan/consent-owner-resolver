@@ -42,6 +42,20 @@ const (
 // own timeout is 3s — so the tail is where the buckets are dense.
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 
+// maxFailureClasses bounds the failure-class label set.
+//
+// errorClass already returns a fixed string per component, so the real count is
+// a handful and this is never reached. It exists as a structural backstop: the
+// class is derived from an error MESSAGE, and this endpoint is unauthenticated,
+// so a future message that reintroduces caller-influenced text must not be able
+// to grow the map without bound. Anything past the cap is folded into
+// failureClassOverflow.
+const maxFailureClasses = 64
+
+// failureClassOverflow is the class every failure past maxFailureClasses is
+// counted under, so the total stays correct even when the detail is dropped.
+const failureClassOverflow = "other"
+
 // requestKey labels one entry of the request counter. Only the ROUTE is used,
 // never the request path: the path carries owner identifiers (see redactPath),
 // and a per-path metric would be both a leak and unbounded cardinality.
@@ -99,10 +113,16 @@ func (m *metrics) observe(route string, status int, elapsed time.Duration) {
 	}
 }
 
-// observeFailure records one resolve error, by class.
+// observeFailure records one resolve error, by class. A class beyond
+// maxFailureClasses is counted as failureClassOverflow rather than added.
 func (m *metrics) observeFailure(class string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, known := m.failures[class]; !known && len(m.failures) >= maxFailureClasses {
+		m.failures[failureClassOverflow]++
+		return
+	}
 	m.failures[class]++
 }
 

@@ -35,6 +35,17 @@ const pathDigestPrefix = "sha256:"
 // failed" prefix and the detail that may quote request data.
 const errorClassSeparator = ": "
 
+// errorClassUnspecified is the class of an error whose message carries no
+// component prefix.
+//
+// It matters that this is a FIXED string rather than the message itself: the
+// class becomes a metric label on the unauthenticated /metrics endpoint, so
+// returning an unprefixed message would put caller-influenced text into the
+// scrape and let a caller mint unbounded label values. Falling back to a
+// constant makes the label set closed by construction - the next error message
+// added without a prefix cannot reopen that.
+const errorClassUnspecified = "unspecified"
+
 // redactPath turns a request path into a stable, non-reversible digest.
 //
 // In the documented NGSI-LD shape the path IS the subject id
@@ -51,18 +62,20 @@ func redactPath(path string) string {
 }
 
 // errorClass reduces a resolver error to the part that says WHICH component
-// failed - "json matcher", "contract matcher", "decode json body" - dropping the
+// failed - "json matcher", "contract matcher", "decode body" - dropping the
 // detail after it, which quotes pointers, URIs and other request data.
 //
-// It is what gets logged at the default level; the full error is available at
-// debug level, and never in a response body.
+// It is what gets logged at the default level and what labels the failure
+// metric; the full error is available at debug level, and never in a response
+// body or a metric. An unprefixed message yields errorClassUnspecified rather
+// than the message, which is what keeps the label set closed.
 func errorClass(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := err.Error()
-	if head, _, found := strings.Cut(msg, errorClassSeparator); found {
-		return head
+	head, _, found := strings.Cut(err.Error(), errorClassSeparator)
+	if !found || head == "" {
+		return errorClassUnspecified
 	}
-	return msg
+	return head
 }
