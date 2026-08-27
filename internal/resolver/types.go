@@ -45,6 +45,19 @@ const (
 	SelectorJSONPointer = "json-pointer"
 )
 
+// Owner-id interpretation schemes. They tell the plugin (and through it the
+// consent-manager) what an OwnerID actually IS, so a typo here silently changes
+// which lookup the consent check performs — which is why Parse validates them.
+const (
+	// SchemeIdentifier: the owner id is the consent-manager's per-participant
+	// identifier for the subject. The default.
+	SchemeIdentifier = "identifier"
+	// SchemeEmail: the owner id is an email address.
+	SchemeEmail = "email"
+	// SchemeDID: the owner id is a decentralized identifier.
+	SchemeDID = "did"
+)
+
 // Body encodings for the (optional) payload delivered to the resolver.
 const (
 	// EncodingNone: the body is not sent; the resolver must decide from Resource
@@ -124,8 +137,8 @@ type Claim struct {
 type ResolveResult struct {
 	// ConsentRequired answers (a): does this payload need any consent check?
 	ConsentRequired bool `json:"consentRequired"`
-	// Scheme tells the plugin how to interpret every OwnerID: "identifier",
-	// "email" or "did".
+	// Scheme tells the plugin how to interpret every OwnerID; one of
+	// SchemeIdentifier, SchemeEmail or SchemeDID.
 	Scheme string `json:"scheme,omitempty"`
 	// Claims answers (b): one entry per data item / subject. Empty when
 	// ConsentRequired is false. Always serialized as a list, never as null -

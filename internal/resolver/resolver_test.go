@@ -345,6 +345,21 @@ func TestResolve_Errors(t *testing.T) {
 	})
 }
 
+func TestParse_AcceptsEverySupportedScheme(t *testing.T) {
+	for _, scheme := range []string{SchemeIdentifier, SchemeEmail, SchemeDID} {
+		t.Run(scheme, func(t *testing.T) {
+			r := mustParse(t, `{"defaultScheme": "`+scheme+`", "rules": [{"match": {}, "consentRequired": true, "matcher": {"type": "static", "owner": "x"}}]}`)
+			res, err := r.Resolve(context.Background(), ResolveRequest{Resource: Resource{Path: "/x"}})
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if res.Scheme != scheme {
+				t.Fatalf("scheme = %q, want %q", res.Scheme, scheme)
+			}
+		})
+	}
+}
+
 func TestParse_ShippedExampleConfigs(t *testing.T) {
 	// The examples are the documentation of the config format; a change that
 	// makes them unparseable must fail here rather than at a user's deployment.

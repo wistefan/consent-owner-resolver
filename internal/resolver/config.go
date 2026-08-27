@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"time"
 )
 
@@ -38,7 +39,12 @@ const (
 
 // defaultScheme is used when the config sets no scheme; the consent-manager
 // resolves owners by their per-participant identifier.
-const defaultScheme = "identifier"
+const defaultScheme = SchemeIdentifier
+
+// validSchemes is the closed set a configured scheme must belong to. A typo
+// ("identifer") would otherwise ship to the plugin and change which lookup the
+// consent check performs, with nothing to notice it.
+var validSchemes = []string{SchemeIdentifier, SchemeEmail, SchemeDID}
 
 // rawConfig is the on-disk (JSON) configuration.
 type rawConfig struct {
@@ -158,6 +164,9 @@ func Parse(data []byte) (*ConfigResolver, error) {
 	if cr.defaultScheme == "" {
 		cr.defaultScheme = defaultScheme
 	}
+	if err := validateScheme("defaultScheme", cr.defaultScheme); err != nil {
+		return nil, err
+	}
 
 	var contractClient contractLookup
 	providerSD := ""
@@ -200,6 +209,9 @@ func Parse(data []byte) (*ConfigResolver, error) {
 		if scheme == "" {
 			scheme = cr.defaultScheme
 		}
+		if err := validateScheme(fmt.Sprintf("rule %s: matcher.scheme", label), scheme); err != nil {
+			return nil, err
+		}
 		cr.rules = append(cr.rules, compiledRule{
 			name:            label,
 			service:         rr.Match.Service,
@@ -210,6 +222,15 @@ func Parse(data []byte) (*ConfigResolver, error) {
 		})
 	}
 	return cr, nil
+}
+
+// validateScheme rejects a scheme outside validSchemes, naming where it came
+// from so the operator does not have to guess which rule is at fault.
+func validateScheme(field, scheme string) error {
+	if slices.Contains(validSchemes, scheme) {
+		return nil
+	}
+	return fmt.Errorf("%s: unknown scheme %q (expected one of %v)", field, scheme, validSchemes)
 }
 
 // resourceCacheTTL maps the configured value onto a duration: unset (0) means
