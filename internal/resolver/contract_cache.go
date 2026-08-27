@@ -25,6 +25,16 @@ import (
 	"consent-owner-resolver/internal/contract"
 )
 
+// sweepThreshold is the entry count at which a write purges expired entries.
+//
+// `load` treats an expired entry as a miss but cannot delete it (it holds the
+// read path and would turn every lookup into a write), so without this nothing
+// ever shrinks the map. Keys are contract ids from the facade, so the map is
+// bounded by the contracts the provider has actually served - fine in practice,
+// unbounded in principle. Sweeping on write, and only past a threshold, keeps
+// the common case O(1).
+const sweepThreshold = 128
+
 // DefaultResourceCacheTTLMs is how long a contract's catalog data resources are
 // reused across requests when the config does not say otherwise. Catalog
 // self-descriptions change on the timescale of contract negotiation, not of API
@@ -103,5 +113,19 @@ func (c *cachingLookup) load(id string) ([]contract.DataResource, bool) {
 func (c *cachingLookup) store(id string, resources []contract.DataResource) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items[id] = cacheEntry{resources: resources, expires: c.now().Add(c.ttl)}
+
+	now := c.now()
+	if len(c.items) >= sweepThreshold {
+		c.sweepExpired(now)
+	}
+	c.items[id] = cacheEntry{resources: resources, expires: now.Add(c.ttl)}
+}
+
+// sweepExpired drops every entry that is past its TTL. The caller holds c.mu.
+func (c *cachingLookup) sweepExpired(now time.Time) {
+	for id, entry := range c.items {
+		if now.After(entry.expires) {
+			delete(c.items, id)
+		}
+	}
 }

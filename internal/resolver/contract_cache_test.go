@@ -20,6 +20,7 @@ package resolver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -31,6 +32,13 @@ type fakeClock struct{ t time.Time }
 
 func (f *fakeClock) now() time.Time          { return f.t }
 func (f *fakeClock) advance(d time.Duration) { f.t = f.t.Add(d) }
+
+// size reports how many entries the cache currently holds.
+func (c *cachingLookup) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.items)
+}
 
 func cachedLookup(t *testing.T, inner contractLookup, ttl time.Duration) (*cachingLookup, *fakeClock) {
 	t.Helper()
@@ -63,6 +71,42 @@ func TestCachingLookup_ReusesResourcesWithinTTL(t *testing.T) {
 	}
 	if stub.resourceCalls != 2 {
 		t.Fatalf("want a refetch after the TTL expired, got %d calls", stub.resourceCalls)
+	}
+}
+
+func TestCachingLookup_SweepsExpiredEntriesOnWrite(t *testing.T) {
+	// `load` treats an expired entry as a miss but leaves it in place, so
+	// without a sweep the map only ever grows.
+	stub := &stubLookup{resources: piiResources()}
+	c, clk := cachedLookup(t, stub, time.Minute)
+
+	for i := 0; i < sweepThreshold; i++ {
+		ct := contractWithTarget(fmt.Sprintf("urn:ngsi-ld:PersonalProfile:%d", i))
+		if _, err := c.DataResources(context.Background(), ct); err != nil {
+			t.Fatalf("DataResources: %v", err)
+		}
+	}
+	if got := c.size(); got != sweepThreshold {
+		t.Fatalf("want %d cached entries, got %d", sweepThreshold, got)
+	}
+
+	// Everything above is now stale; the next write must clear it out.
+	clk.advance(2 * time.Minute)
+	fresh := contractWithTarget("urn:ngsi-ld:PersonalProfile:fresh")
+	if _, err := c.DataResources(context.Background(), fresh); err != nil {
+		t.Fatalf("DataResources: %v", err)
+	}
+	if got := c.size(); got != 1 {
+		t.Fatalf("the sweep must leave only the fresh entry, got %d", got)
+	}
+
+	// The survivor must still be the live one, not a stale leftover.
+	before := stub.resourceCalls
+	if _, err := c.DataResources(context.Background(), fresh); err != nil {
+		t.Fatalf("DataResources: %v", err)
+	}
+	if stub.resourceCalls != before {
+		t.Fatal("the entry kept by the sweep must still be a cache hit")
 	}
 }
 
