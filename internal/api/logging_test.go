@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -72,7 +73,9 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	log.SetOutput(&buf)
 	log.SetFlags(0)
 	t.Cleanup(func() {
-		log.SetOutput(nil)
+		// Restore stderr, not nil: the standard logger panics on a nil writer,
+		// which would take out whichever test logs next.
+		log.SetOutput(os.Stderr)
 		log.SetFlags(flags)
 	})
 	return &buf

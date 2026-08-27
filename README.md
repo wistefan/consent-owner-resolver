@@ -89,6 +89,28 @@ Response:
 
 ### `GET /health` → `200 {"status":"ok"}`
 
+### `GET /metrics` → Prometheus text exposition
+
+| metric | type | labels |
+|---|---|---|
+| `owner_resolver_requests_total` | counter | `route`, `status` |
+| `owner_resolver_request_duration_seconds` | histogram | `route` |
+| `owner_resolver_resolve_failures_total` | counter | `class` |
+
+The resolver sits on the synchronous path of every proxied request while fanning
+out to the consent-facade, so p99 latency and failure rate are what you will
+want the first time the gateway starts timing out. `class` is the failing
+component (`json matcher`, `contract matcher`, …), never the error detail; the
+labels deliberately carry **no request path and no owner**, so `/metrics` is
+safe to scrape without the shared secret.
+
+### Correlation
+
+Every response carries `X-Request-Id`. Send one and the resolver reuses it
+(when it is short and free of control characters); send none and it mints one.
+The same id appears in the failure log line, so a plugin-side trace and a
+resolver-side log line can be joined.
+
 ## Configuration
 
 JSON, mounted at `CONFIG_PATH` (default `/etc/owner-resolver/config.json`).

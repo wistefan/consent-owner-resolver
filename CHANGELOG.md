@@ -38,6 +38,14 @@ implementation.
   **The consent-facade must decode with the URL-safe alphabet.**
   `TestEncodeParticipant` pins the exact strings.
 
+### Observability
+
+- `GET /metrics` exposes request counts, a latency histogram and resolve
+  failures by error class, in Prometheus text format. Stdlib only — no client
+  library, no new dependency.
+- `X-Request-Id` is accepted, minted when absent, echoed on every response and
+  logged with each failure.
+
 ### Configuration
 
 - `contractService.resourceCacheTtlMs` (default `30000`, negative disables)

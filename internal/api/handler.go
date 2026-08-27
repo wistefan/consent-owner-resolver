@@ -15,16 +15,19 @@
  * limitations under the License.
  */
 
-// Package api exposes the OwnerResolver over HTTP: POST /resolve and GET /health.
+// Package api exposes the OwnerResolver over HTTP: POST /resolve, GET /health
+// and GET /metrics.
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"consent-owner-resolver/internal/resolver"
 )
@@ -34,6 +37,17 @@ const defaultMaxBodyBytes = 5 << 20
 
 // bearerPrefix is the Authorization scheme accepted for the shared secret.
 const bearerPrefix = "Bearer "
+
+// Routes served. They double as the `route` metric label, which is why the
+// request path never appears in a metric: it carries owner identifiers.
+const (
+	routeResolve = "/resolve"
+	routeHealth  = "/health"
+	routeMetrics = "/metrics"
+)
+
+// prometheusContentType is the exposition format /metrics answers with.
+const prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
 
 // Options configures the HTTP binding.
 type Options struct {
@@ -61,6 +75,7 @@ type Handler struct {
 	maxBodyBytes int64
 	authToken    string
 	debug        bool
+	metrics      *metrics
 }
 
 // NewHandler builds an http.Handler routing /resolve and /health to the given
@@ -69,13 +84,77 @@ func NewHandler(r resolver.Resolver, opts Options) http.Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = defaultMaxBodyBytes
 	}
-	h := &Handler{resolver: r, maxBodyBytes: opts.MaxBodyBytes, authToken: opts.AuthToken, debug: opts.Debug}
+	h := &Handler{
+		resolver:     r,
+		maxBodyBytes: opts.MaxBodyBytes,
+		authToken:    opts.AuthToken,
+		debug:        opts.Debug,
+		metrics:      newMetrics(),
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/resolve", h.resolve)
+	mux.Handle(routeResolve, h.instrument(routeResolve, h.resolve))
 	// /health carries no data and must stay reachable for liveness probes, so it
 	// is deliberately not authenticated.
-	mux.HandleFunc("/health", h.health)
+	mux.Handle(routeHealth, h.instrument(routeHealth, h.health))
+	// /metrics exposes route, status and error CLASS only - no path, no owner,
+	// no error detail - so it is safe to scrape without the shared secret.
+	mux.Handle(routeMetrics, h.instrument(routeMetrics, h.serveMetrics))
 	return mux
+}
+
+// statusRecorder captures the status code so it can be counted; without it the
+// metric could only ever record "a request happened".
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// WriteHeader implements http.ResponseWriter.
+func (s *statusRecorder) WriteHeader(status int) {
+	s.status = status
+	s.ResponseWriter.WriteHeader(status)
+}
+
+// Write implements http.ResponseWriter, recording the implicit 200 that a Write
+// without a preceding WriteHeader produces.
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// instrument stamps the correlation id on the response, times the handler and
+// records the outcome. The resolver sits on the synchronous path of every
+// proxied request while fanning out to another service, so p99 latency and
+// failure rate are exactly what an operator needs when the gateway starts
+// timing out.
+func (h *Handler) instrument(route string, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := requestID(r)
+		w.Header().Set(RequestIDHeader, id)
+		r = r.WithContext(withRequestID(r.Context(), id))
+
+		recorder := &statusRecorder{ResponseWriter: w}
+		start := time.Now()
+		next(recorder, r)
+		if recorder.status == 0 {
+			recorder.status = http.StatusOK
+		}
+		h.metrics.observe(route, recorder.status, time.Since(start))
+	})
+}
+
+// serveMetrics renders the collected metrics for a Prometheus scrape.
+func (h *Handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "only GET is allowed")
+		return
+	}
+	w.Header().Set("Content-Type", prometheusContentType)
+	if err := h.metrics.writeTo(w); err != nil {
+		log.Printf("[owner-resolver] write metrics: %v", err)
+	}
 }
 
 // authorized reports whether the request presents the configured shared secret.
@@ -139,7 +218,8 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		// The plugin distinguishes the two 4xx cases, so they must not be
 		// conflated: a payload the resolver cannot decode is the caller's bug
 		// (400), an owner it cannot determine is not (422).
-		h.logResolveFailure(req, err)
+		h.metrics.observeFailure(errorClass(err))
+		h.logResolveFailure(r.Context(), req, err)
 		// The response says WHAT failed, never WHY in detail: an error like
 		// `json matcher: no owner at "/dataOwner"` hands the caller this
 		// deployment's pointer configuration. The detail is in the log.
@@ -157,14 +237,15 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 // logResolveFailure records a failed resolve. At the default level neither the
 // path nor the error detail is logged verbatim - both carry owner identifiers in
 // the documented payload shapes.
-func (h *Handler) logResolveFailure(req resolver.ResolveRequest, err error) {
+func (h *Handler) logResolveFailure(ctx context.Context, req resolver.ResolveRequest, err error) {
+	id := requestIDFrom(ctx)
 	if h.debug {
-		log.Printf("[owner-resolver] resolve failed: service=%q method=%q path=%q: %v",
-			req.Resource.Service, req.Resource.Method, req.Resource.Path, err)
+		log.Printf("[owner-resolver] resolve failed: requestId=%q service=%q method=%q path=%q: %v",
+			id, req.Resource.Service, req.Resource.Method, req.Resource.Path, err)
 		return
 	}
-	log.Printf("[owner-resolver] resolve failed: service=%q method=%q path=%s: %s",
-		req.Resource.Service, req.Resource.Method, redactPath(req.Resource.Path), errorClass(err))
+	log.Printf("[owner-resolver] resolve failed: requestId=%q service=%q method=%q path=%s: %s",
+		id, req.Resource.Service, req.Resource.Method, redactPath(req.Resource.Path), errorClass(err))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
