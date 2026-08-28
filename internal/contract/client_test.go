@@ -69,23 +69,27 @@ func TestEncodeParticipant(t *testing.T) {
 	// This is a WIRE CONTRACT with the consent-facade, not an implementation
 	// detail: the expected strings are written out rather than computed, so a
 	// change to the alphabet fails here instead of at integration time.
+	//
+	// Note the `=` padding. The facade validates a participant path parameter by
+	// re-encoding it with a padding-emitting encoder and comparing, so an unpadded
+	// value is rejected with 400 even though it decodes correctly.
 	cases := map[string]struct {
 		selfDescriptionURL string
 		want               string
 	}{
 		"http participant sd": {
 			selfDescriptionURL: "http://facade/participants/urn:ngsi-ld:organization:prov",
-			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvdXJuOm5nc2ktbGQ6b3JnYW5pemF0aW9uOnByb3Y",
+			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvdXJuOm5nc2ktbGQ6b3JnYW5pemF0aW9uOnByb3Y=",
 		},
 		"did consumer": {
 			selfDescriptionURL: "did:web:fancy-marketplace.biz",
-			want:               "ZGlkOndlYjpmYW5jeS1tYXJrZXRwbGFjZS5iaXo",
+			want:               "ZGlkOndlYjpmYW5jeS1tYXJrZXRwbGFjZS5iaXo=",
 		},
 		// `~` is what makes the standard alphabet reachable here: it is used
 		// throughout this project's identifiers.
 		"tilde in the identifier": {
 			selfDescriptionURL: "http://facade/participants/default~urn:ngsi-ld:organization:prov",
-			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvZGVmYXVsdH51cm46bmdzaS1sZDpvcmdhbml6YXRpb246cHJvdg",
+			want:               "aHR0cDovL2ZhY2FkZS9wYXJ0aWNpcGFudHMvZGVmYXVsdH51cm46bmdzaS1sZDpvcmdhbml6YXRpb246cHJvdg==",
 		},
 	}
 	for name, tc := range cases {
