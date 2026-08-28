@@ -156,15 +156,22 @@ func NewClient(baseURL string, timeoutMs int) *Client {
 //
 //	standard : A-Za-z0-9 + / =   -- `/` would go on the wire as %2F, which nginx
 //	                                and APISIX commonly normalize back to `/`,
-//	                                silently changing the path; `=` padding is
-//	                                always present for inputs of the wrong length
-//	raw url  : A-Za-z0-9 - _     -- nothing to escape, nothing to normalize
+//	                                silently changing the path
+//	url      : A-Za-z0-9 - _ =   -- nothing to escape, nothing to normalize; `=`
+//	                                is legal in a path segment
 //
 // The `+` and `/` cases only arise for SD URLs containing `?`, `>` or `~`, which
 // ordinary ones do not - but `~` is used throughout this project's identifiers
 // (`default~urn:ngsi-ld:agreement:1`), so the class is reachable rather than
 // theoretical.
-var participantEncoding = base64.RawURLEncoding
+//
+// The encoding is PADDED. The facade does not merely decode the path parameter,
+// it validates it by re-encoding with a padding-emitting encoder and comparing:
+// an unpadded value decodes fine but fails that round-trip, so the facade answers
+// 400 and every contract lookup fails. Padded url-safe is the only alphabet that
+// is both path-safe and accepted (verified against /verify: unpadded 400, padded
+// 200).
+var participantEncoding = base64.URLEncoding
 
 // encodeParticipant renders a participant self-description URL the way the
 // facade's path parameters expect it (see participantEncoding). The result needs
